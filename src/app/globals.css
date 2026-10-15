@@ -1,0 +1,235 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #071c22;
+  --ink-soft: #3d5a62;
+  --teal: #0b4a56;
+  --teal-deep: #072a33;
+  --teal-mid: #14606e;
+  --gold: #d4a017;
+  --gold-soft: #f3dd9a;
+  --paper: #eef3f5;
+  --card: #ffffff;
+  --line: #d7e3e6;
+  --ok: #0c8a62;
+  --warn: #c47b12;
+  --bad: #c53d3d;
+  --info: #1b6f9a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: #d4a01733;
+}
+
+.pp-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgba(7, 28, 34, 0.04);
+}
+
+.pp-gold-bar {
+  background: linear-gradient(90deg, #d4a017, #f0c14b 50%, #d4a017);
+  height: 3px;
+}
+
+.pp-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: white;
+}
+
+.pp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.pp-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  background: #f6fafb;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.pp-table td {
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid #eef3f5;
+  vertical-align: middle;
+}
+
+.pp-table tr:hover td {
+  background: #f8fbfc;
+}
+
+/* Scroll box: the table scrolls inside its own block, header row and first column stay visible. */
+.pp-scroll {
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #9fb8be #eef3f5;
+}
+
+.pp-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 12px;
+}
+
+.pp-scroll::-webkit-scrollbar-thumb {
+  background: #9fb8be;
+  border-radius: 999px;
+  border: 2px solid #eef3f5;
+}
+
+.pp-scroll::-webkit-scrollbar-track {
+  background: #eef3f5;
+}
+
+.pp-scroll .pp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.pp-sticky-col th:first-child,
+.pp-sticky-col td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: white;
+  box-shadow: inset -1px 0 0 var(--line);
+}
+
+.pp-sticky-col thead th:first-child {
+  z-index: 3;
+  background: #f6fafb;
+}
+
+/* Dense variant for wide matrices. */
+.pp-compact {
+  font-size: 0.78rem;
+}
+
+.pp-compact th {
+  padding: 0.45rem 0.5rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+}
+
+.pp-compact td {
+  padding: 0.35rem 0.5rem;
+  border-right: 1px solid #f1f5f6;
+}
+
+.pp-compact tr:hover td {
+  box-shadow: inset 0 1px 0 #9fb8be, inset 0 -1px 0 #9fb8be;
+}
+
+.pp-compact.pp-sticky-col tr:hover td:first-child {
+  background: #f3f8f9;
+  box-shadow: inset 0 1px 0 #9fb8be, inset 0 -1px 0 #9fb8be, inset -1px 0 0 var(--line);
+}
+
+/* Price cells (more specific than the row hover, so the colour stays). */
+.pp-table td.pp-below {
+  background: #fdecec;
+  color: #b42323;
+}
+
+.pp-table td.pp-above {
+  background: #e5f6ee;
+  color: #0c6b4d;
+}
+
+.pp-table td.pp-none {
+  color: #c3d0d3;
+}
+
+.pp-table td.pp-cheapest {
+  font-weight: 700;
+  box-shadow: inset 0 0 0 2px #d4a017;
+}
+
+.pp-kbd {
+  font-size: 0.7rem;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 0.35rem;
+  padding: 0.05rem 0.35rem;
+  color: var(--ink-soft);
+  background: #f7fafb;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #e8eef0 25%, #f4f7f8 37%, #e8eef0 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.2s ease infinite;
+  border-radius: 0.6rem;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+.demo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7a5a08;
+  background: #fff4cc;
+  border: 1px solid #ead48a;
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white;
+  }
+}

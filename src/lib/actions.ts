@@ -76,7 +76,15 @@ export async function loginAction(_prev: unknown, formData: FormData) {
   redirect(ws && !ws.onboardingCompleted ? "/onboarding" : "/dashboard");
 }
 
+// Online (production), sign-up is closed once the first account exists, unless PRICEPILOT_OPEN_REGISTRATION=1.
+async function registrationOpen(): Promise<boolean> {
+  if (process.env.NODE_ENV !== "production" || process.env.PRICEPILOT_OPEN_REGISTRATION === "1") return true;
+  const [anyUser] = await db.select({ id: users.id }).from(users).limit(1);
+  return !anyUser;
+}
+
 export async function registerAction(_prev: unknown, formData: FormData) {
+  if (!(await registrationOpen())) return { error: "Les inscriptions sont fermées. Demandez une invitation au propriétaire de l'espace." };
   const email = str(formData, "email").toLowerCase();
   const password = String(formData.get("password") ?? "");
   const fullName = str(formData, "fullName");
@@ -129,6 +137,11 @@ export async function logoutAction() {
 export async function forgotAction(_prev: unknown, formData: FormData) {
   const email = str(formData, "email").toLowerCase();
   if (!email) return { error: "Email is required." };
+  // Without an e-mail server the link can only be shown on screen — which online would let anyone who
+  // knows an address take over the account. In production, resets go through scripts/reset-password.ts.
+  if (process.env.NODE_ENV === "production" && process.env.PRICEPILOT_SHOW_RESET_LINK !== "1") {
+    return { ok: true, message: "Aucun serveur d'e-mail n'est configuré : demandez à l'administrateur de réinitialiser votre mot de passe." };
+  }
   const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (!rows[0]) return { ok: true, message: "Si ce compte existe, un lien de réinitialisation a été créé." };
   const token = await createResetToken(rows[0].id);

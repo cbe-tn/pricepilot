@@ -129,6 +129,18 @@ Checks: `bun run typecheck` · `bun run test` · `bun run build`.
 | `CRON_SECRET` | on Vercel | Secret expected by `/api/cron` as `Authorization: Bearer <CRON_SECRET>`. |
 | `PRICEPILOT_SCHEDULER` | no | `0` disables the in-process scheduler (automatically off on Vercel). |
 | `PRICEPILOT_DEMO_SEED` | no | `1` seeds demo data in a new workspace (off by default — real data only). |
+| `PRICEPILOT_OPEN_REGISTRATION` | no | `1` keeps `/register` open in production. By default sign-up closes once the first account exists; add colleagues with *Paramètres → Membres*. |
+| `PRICEPILOT_SHOW_RESET_LINK` | no | `1` shows the password-reset link on screen in production. Off by default: without an e-mail server, anyone knowing an address could take the account over. |
+
+### Accounts and passwords
+
+- Sign in on `/login` with the e-mail and password of the account.
+- Colleagues: *Paramètres → Membres* (owner / administrator / collaborator).
+- Forgotten password (no e-mail server is configured), from a machine with the repository:
+
+  ```bash
+  DATABASE_URL="<Supabase URI>" bun scripts/reset-password.ts <email> <new-password>
+  ```
 
 ---
 

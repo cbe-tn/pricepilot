@@ -186,14 +186,14 @@ select cron.schedule(
   select net.http_get(
     url := 'https://<your-app>.vercel.app/api/cron',
     headers := jsonb_build_object('Authorization', 'Bearer <CRON_SECRET>'),
-    timeout_milliseconds := 5000
+    timeout_milliseconds := 300000
   );
   $$
 );
 ```
 
-`net.http_get` does not wait for the pass to finish; the function keeps running on Vercel (up to
-300 s). To stop: `select cron.unschedule('pricepilot-tick');` — runs are listed in
+`net.http_get` runs in the background (pg_net); the 300 s timeout keeps the request open for the
+whole pass so Vercel does not stop the function early. To stop: `select cron.unschedule('pricepilot-tick');` — runs are listed in
 `cron.job_run_details`.
 
 ---

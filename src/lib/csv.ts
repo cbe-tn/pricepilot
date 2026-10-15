@@ -46,7 +46,52 @@ const HEADER_ALIASES: Record<string, string> = {
   marque: "brand", modele: "model", categorie: "category", famille: "category", fournisseur: "supplierName", tva: "vatRate",
   fabricant: "manufacturer", souscategorie: "subcategory", sku: "sku", transport: "shippingCost", fraisdimport: "importCost",
   autrescouts: "otherCosts", margeminimale: "minProfitMargin", prixdeventeciblettc: "targetSellingPrice", garantie: "warranty",
+  // Stock exports of the ERP: "ARTICLE _Designation", "Quantité Stock", "Prix unitaire", "Remise", "Référence proposée", "Fiabilité".
+  articledesignation: "name", quantitestock: "stockQty", qtestock: "stockQty", stockactuel: "stockQty",
+  prixunitaire: "purchasePrice", pu: "purchasePrice", puht: "purchasePrice", prixunitaireht: "purchasePrice",
+  referenceproposee: "manufacturerRef", referencefabricant: "manufacturerRef", reffabricant: "manufacturerRef",
+  remise: "discountPct", remisepct: "discountPct", fiabilite: "refReliability", dernierachat: "lastPurchase", datedernierachat: "lastPurchase",
 };
+
+// Looser matches for headers not listed above (e.g. "Désignation article", "Quantité en stock").
+const HEADER_PATTERNS: Array<[RegExp, string]> = [
+  [/designation|libelle/, "name"],
+  [/^(quantite|qte)/, "stockQty"],
+  [/^(reference|ref)(fabricant|constructeur|proposee)?$/, "manufacturerRef"],
+  [/^prix(d)?achat|^prixunitaire/, "purchasePrice"],
+];
+
+/** "Fiabilité" values that mean the proposed reference is not a usable manufacturer reference. */
+const UNUSABLE_REFERENCE_RE = /generique|non identifiable|pas de ref/i;
+
+/**
+ * Splits a proposed reference such as "TK-475 (1T02K30NL0)", "MX-61GTCA / MX-61FTCA" or
+ * "CM751A? (OfficeJet Pro 8100)" into the main reference and an alternative one (or model).
+ * Returns no reference when the reliability column says there is none.
+ */
+export function cleanReference(raw: string | undefined, reliability?: string): { ref: string | null; alt: string | null } {
+  const text = (raw ?? "").trim();
+  if (!text || (reliability && UNUSABLE_REFERENCE_RE.test(reliability.normalize("NFD").replace(/[̀-ͯ]/g, "")))) {
+    return { ref: null, alt: null };
+  }
+  if (/mod[eè]le non pr[eé]cis[eé]/i.test(text)) return { ref: null, alt: null };
+  const paren = text.match(/^(.*?)\s*\(([^)]*)\)/);
+  let main = paren ? paren[1] : text;
+  let alt = paren ? paren[2] : null;
+  const slash = main.split(/\s+\/\s+/);
+  if (slash.length > 1) {
+    main = slash[0];
+    alt = alt ?? slash.slice(1).join(" / ");
+  }
+  const tidy = (s: string | null) =>
+    s
+      ?.replace(/\?+/g, "")
+      .replace(/\b(adaptable|compatible|type)\b/gi, "")
+      .replace(/r[ée]f\.?\s.*confirmer/i, "")
+      .replace(/\s{2,}/g, " ")
+      .trim() || null;
+  return { ref: tidy(main), alt: tidy(alt) };
+}
 
 function headerKey(header: string): string {
   return header.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -58,7 +103,7 @@ const IMPORT_FIELDS = new Set<string>(PRODUCT_IMPORT_COLUMNS);
 function headerField(header: string): string | undefined {
   const key = headerKey(header);
   if (!key) return undefined;
-  return HEADER_ALIASES[key] ?? [...IMPORT_FIELDS].find((f) => f.toLowerCase() === key);
+  return HEADER_ALIASES[key] ?? [...IMPORT_FIELDS].find((f) => f.toLowerCase() === key) ?? HEADER_PATTERNS.find(([re]) => re.test(key))?.[1];
 }
 
 /**

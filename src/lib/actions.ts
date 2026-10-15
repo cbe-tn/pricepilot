@@ -39,7 +39,7 @@ import { runMonitoringJob } from "@/lib/monitoring";
 import { fetchLiveOffer } from "@/lib/extract";
 import { findByReference, rebuildCatalog, sellerExclusions, type ReferenceSearchResult } from "@/lib/catalog";
 import { kickScheduler } from "@/lib/scheduler";
-import { parseSpreadsheet } from "@/lib/csv";
+import { cleanReference, parseSpreadsheet } from "@/lib/csv";
 import { vatRateFor } from "@/lib/tax";
 import { recommendPrice, costFromProduct, taxFromWorkspace } from "@/lib/pricing";
 import { pricingRecommendations } from "@/db/schema";
@@ -427,18 +427,40 @@ export async function importProductsAction(formData: FormData) {
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "Choisissez un fichier CSV ou Excel." };
   const buf = Buffer.from(await file.arrayBuffer());
-  const rows = parseSpreadsheet(buf);
+  const keyOf = (v: string | null | undefined) =>
+    (v ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
 
-  // Re-importing a list (or a stock file) updates the products we already have instead of duplicating
-  // them: same manufacturer reference, barcode or SKU (case-insensitive).
+  // ERP stock exports repeat an article once per purchase lot (same name and stock, different unit
+  // price): keep one row per article, the one with the most recent purchase.
+  const byName = new Map<string, Record<string, string>>();
+  for (const row of parseSpreadsheet(buf)) {
+    const nameKey = keyOf(row.name || row.Name);
+    if (!nameKey) continue;
+    const prev = byName.get(nameKey);
+    if (!prev || n(row.lastPurchase) >= n(prev.lastPurchase)) byName.set(nameKey, row);
+  }
+  const rows = [...byName.values()];
+
+  // Re-importing updates the products we already have instead of duplicating them: same name first,
+  // else same reference / barcode / SKU when it designates a single product. Different names sharing a
+  // reference (colour variants such as two LEAGOO Z5 LTE) stay separate products.
   const existing = await db
     .select()
     .from(products)
     .where(and(eq(products.workspaceId, auth.workspace.id), isNull(products.archivedAt)));
-  const keyOf = (v: string | null | undefined) => (v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const byKey = new Map<string, (typeof existing)[number]>();
-  for (const p of existing.sort((a, b) => +a.createdAt - +b.createdAt)) {
-    for (const k of [p.manufacturerRef, p.barcode, p.sku].map(keyOf)) if (k.length >= 3 && !byKey.has(k)) byKey.set(k, p);
+  const existingByName = new Map(existing.map((p) => [keyOf(p.name), p]));
+  const keyCount = new Map<string, number>();
+  for (const p of existing) for (const k of new Set([p.manufacturerRef, p.barcode, p.sku].map(keyOf))) if (k.length >= 3) keyCount.set(k, (keyCount.get(k) ?? 0) + 1);
+  const existingByKey = new Map<string, (typeof existing)[number]>();
+  for (const p of existing) for (const k of [p.manufacturerRef, p.barcode, p.sku].map(keyOf)) if (k.length >= 3 && keyCount.get(k) === 1) existingByKey.set(k, p);
+  const fileNamesPerRef = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const k = keyOf(cleanReference(row.manufacturerRef || row.reference, row.refReliability).ref);
+    if (k.length >= 3) fileNamesPerRef.set(k, (fileNamesPerRef.get(k) ?? new Set()).add(keyOf(row.name || row.Name)));
   }
 
   let count = 0;
@@ -446,21 +468,30 @@ export async function importProductsAction(formData: FormData) {
   for (const row of rows) {
     const name = row.name || row.Name;
     if (!name) continue;
-    const ref = row.manufacturerRef || row.reference || null;
+    // "TK-475 (1T02K30NL0)" → reference TK-475, alternative 1T02K30NL0 kept as model (both are searched).
+    const { ref, alt } = cleanReference(row.manufacturerRef || row.reference, row.refReliability);
+    const model = row.model || (alt && alt !== ref ? alt : null);
     const barcode = row.barcode || row.ean || null;
-    const match = [ref, barcode, row.sku].map(keyOf).find((k) => k.length >= 3 && byKey.has(k));
-    const current = match ? byKey.get(match)! : null;
+    // Purchase price net of the line discount ("Remise" in %).
+    const discount = Math.min(100, Math.max(0, n(String(row.discountPct ?? "").replace(",", "."))));
+    const purchase = row.purchasePrice ? n(String(row.purchasePrice).replace(",", ".")) * (1 - discount / 100) : null;
+    const reliabilityTag = row.refReliability ? `Réf : ${row.refReliability.split(/\s[–-]\s|\s\(/)[0].trim()}` : null;
+    const unambiguous = (k: string) => k.length >= 3 && (fileNamesPerRef.get(k)?.size ?? 1) <= 1 && existingByKey.has(k);
+    const keyMatch = [ref, barcode, row.sku].map(keyOf).find(unambiguous);
+    const current = existingByName.get(keyOf(name)) ?? (keyMatch ? existingByKey.get(keyMatch)! : null);
     if (current) {
       // Only overwrite what the file actually provides, so a "Réf + Qté" stock list keeps prices intact.
       const set: Partial<typeof products.$inferInsert> = { updatedAt: new Date() };
-      if (row.purchasePrice) set.purchasePrice = moneyStr(n(row.purchasePrice));
+      if (purchase != null) set.purchasePrice = moneyStr(purchase);
+      if (ref && !current.manufacturerRef) set.manufacturerRef = ref;
+      if (reliabilityTag) set.tags = [...(current.tags ?? []).filter((t) => !t.startsWith("Réf : ")), reliabilityTag];
       if (row.actualSellingPrice) set.actualSellingPrice = moneyStr(n(row.actualSellingPrice));
       if (row.targetSellingPrice) set.targetSellingPrice = moneyStr(n(row.targetSellingPrice));
       if (row.stockQty !== undefined && row.stockQty !== "") set.stockQty = Math.round(n(row.stockQty));
       if (row.vatRate) set.vatRate = moneyStr(asRate(row.vatRate));
       if (row.minProfitMargin) set.minProfitMargin = moneyStr(asRate(row.minProfitMargin));
       if (row.brand && !current.brand) set.brand = row.brand;
-      if (row.model && !current.model) set.model = row.model;
+      if (model && !current.model) set.model = model;
       if (barcode && !current.barcode) set.barcode = barcode;
       if (row.category && !current.category) set.category = row.category;
       if (row.supplierName) set.supplierName = row.supplierName;
@@ -472,18 +503,18 @@ export async function importProductsAction(formData: FormData) {
       updated += 1;
       continue;
     }
-    const [created] = await db.insert(products).values({
+    await db.insert(products).values({
       workspaceId: auth.workspace.id,
       name,
       brand: row.brand || null,
       manufacturer: row.manufacturer || row.brand || null,
-      model: row.model || null,
+      model,
       manufacturerRef: ref,
       barcode,
       sku: row.sku || null,
       category: row.category || null,
       subcategory: row.subcategory || null,
-      purchasePrice: moneyStr(n(row.purchasePrice)),
+      purchasePrice: moneyStr(purchase ?? 0),
       purchaseCurrency: row.purchaseCurrency || "TND",
       exchangeRate: moneyStr(n(row.exchangeRate) || 1),
       shippingCost: moneyStr(n(row.shippingCost)),
@@ -500,19 +531,21 @@ export async function importProductsAction(formData: FormData) {
       condition: row.condition || "new",
       description: row.description || null,
       specifications: parseSpecLines(row.description),
-      tags: (row.tags || "")
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
+      tags: [
+        ...(row.tags || "")
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+        ...(reliabilityTag ? [reliabilityTag] : []),
+      ],
       isDemo: false,
-    }).returning();
-    for (const k of [created.manufacturerRef, created.barcode, created.sku].map(keyOf)) if (k.length >= 3 && !byKey.has(k)) byKey.set(k, created);
+    });
     count += 1;
   }
   await writeAudit(auth, "import_products", "product", undefined, { count, updated });
   kickScheduler(); // imported products are matched on competitors in the background
   revalidatePath("/products");
-  revalidatePath("/stock");
+  revalidatePath("/stock-web");
   return { ok: true, count, updated };
 }
 

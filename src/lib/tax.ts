@@ -17,8 +17,13 @@ const IT_RE = new RegExp(
     "cartouches?",
     "bouteilles? d'?encre",
     "encres?",
-    "ruban",
-    "tambour",
+    "rubans?",
+    "tambours?",
+    "photoconducteurs?",
+    "copieurs?",
+    "duplicopieurs?",
+    "devell?oppeurs?",
+    "matricielles?",
     "pc (?:portables?|de bureau|bureau|gamer|gaming|aio|all in one|tout en un)",
     "mini pc",
     "ordinateurs?",
@@ -61,12 +66,17 @@ function norm(s: string): string {
     .trim();
 }
 
+// IT categories of the ERP whose article names do not always say it ("Bloc Dechet KYOCERA…", "Master Ricoh…").
+const IT_CATEGORY_RE =
+  /\s(?:pieces? de rechanges? (?:pc|imprimantes?)|pieces? detachees? copieurs?|sauvegardes?|cons laser|consommables? (?:laser|traceurs?)|masters?|imp matricielle)\s/;
+
 // CCTV stays at 19 % even for its IT-looking parts (surveillance hard drives, NVR, PoE switches).
 const CCTV_RE = /\s(?:cameras?|videosurveillance|surveillance|dvr|nvr|xvr|hikvision|hilook|dahua|uniview|ezviz|imou)\s/;
 
 export function isItEquipment(p: { name?: string | null; category?: string | null; subcategory?: string | null }): boolean {
   const text = ` ${norm([p.category, p.subcategory, p.name].filter(Boolean).join(" "))} `;
   if (CCTV_RE.test(text)) return false;
+  if (p.category && IT_CATEGORY_RE.test(` ${norm(p.category)} `)) return true;
   return new RegExp(`\\s(?:${IT_RE.source})\\s`).test(text);
 }
 

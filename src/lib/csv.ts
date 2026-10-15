@@ -247,7 +247,8 @@ const num = (v: string | undefined) => n(String(v ?? "").replace(/\s/g, "").repl
 export function stockRowFacts(row: Record<string, string>) {
   const { ref, alt } = cleanReference(row.manufacturerRef || row.reference, row.refReliability);
   const unit = row.purchasePrice ? num(row.purchasePrice) : null;
-  const rawDiscount = Math.max(0, num(row.discountPct));
+  // ERP discounts carry float noise (0,0004 ; 46,4998): keep 2 decimals.
+  const rawDiscount = Math.max(0, Math.round(num(row.discountPct) * 100) / 100);
   const discountIgnored = rawDiscount >= 100;
   const discount = discountIgnored ? 0 : Math.min(rawDiscount, 99.99);
   const purchase = unit != null ? Math.round(unit * (1 - discount / 100) * 1000) / 1000 : null;

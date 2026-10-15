@@ -94,3 +94,7 @@ assert.deepEqual(cleanReference("Toner e-STUDIO 2309A: T-2309E", "Probable – �
 assert.deepEqual(cleanReference("TK-475 (1T02K30NL0)"), { ref: "TK-475", alt: "1T02K30NL0" });
 assert.deepEqual(cleanReference("x", "Article générique – pas de réf. fabricant"), { ref: null, alt: null });
 console.log("stock import tests passed");
+const noise = stockRowFacts({ purchasePrice: "36", discountPct: "0.0004" });
+assert.equal(noise.purchase, 36);
+assert.equal(noise.note, null);
+console.log("discount rounding test passed");

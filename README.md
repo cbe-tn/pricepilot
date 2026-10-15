@@ -139,6 +139,17 @@ Checks: `bun run typecheck` · `bun run test` · `bun run build`.
 1. Create a project on [supabase.com](https://supabase.com) — region **Europe (Frankfurt)**.
 2. *Connect* → copy the **Session pooler** connection string.
 3. Create the tables: `DATABASE_URL="<that URI>" bun run db:push`.
+4. **Lock the tables from Supabase's public Data API** (the app connects as `postgres`, which is not
+   affected). Without this, anyone with the project URL and the public anon key could read them.
+   Run in the SQL editor — and again after any schema change that adds a table:
+
+   ```sql
+   do $$ declare t text; begin
+     for t in select tablename from pg_tables where schemaname = 'public' loop
+       execute format('alter table public.%I enable row level security', t);
+     end loop;
+   end $$;
+   ```
 
 ### 2. Vercel (application)
 

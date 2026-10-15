@@ -6,7 +6,6 @@ export function AuthFrame({ title, subtitle, children }: { title: string; subtit
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
       <div className="relative hidden overflow-hidden bg-[#072a33] lg:block">
-        <img src="/images/hero.jpg" alt="" className="absolute inset-0 h-full w-full object-cover opacity-50" />
         <div className="absolute inset-0 bg-gradient-to-t from-[#071c22] via-[#071c22/70] to-transparent" />
         <div className="relative flex h-full flex-col justify-end p-10 text-white">
           <img src="/brand/logo-full.png" alt="CBE — Cap Bon Electronique" className="mb-5 h-16 w-auto self-start rounded-xl bg-white p-2" />

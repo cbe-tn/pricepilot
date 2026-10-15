@@ -28,7 +28,7 @@ export default async function LandingPage() {
         </div>
       </header>
 
-      <section className="mx-auto grid max-w-6xl items-center gap-10 px-6 pb-16 pt-8 lg:grid-cols-2">
+      <section className="mx-auto max-w-6xl px-6 pb-16 pt-8">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#d4a017]">Pour les revendeurs tunisiens d’informatique et d’électroménager</p>
           <h1 className="mt-4 text-4xl font-semibold leading-[1.1] md:text-5xl">
@@ -46,10 +46,6 @@ export default async function LandingPage() {
               Créer ma boutique
             </Link>
           </div>
-        </div>
-        <div className="relative">
-          <div className="absolute -inset-4 rounded-[2rem] bg-[#d4a017]/20 blur-2xl" />
-          <img src="/images/hero.jpg" alt="Tableau de bord" className="relative rounded-[1.5rem] border border-white/10 shadow-2xl" />
         </div>
       </section>
 

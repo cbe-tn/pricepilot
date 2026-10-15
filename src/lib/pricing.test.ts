@@ -80,3 +80,17 @@ const tight = recommendPrice({
 assert.ok(tight.recommendedTtc >= floor - 0.001 && tight.policyViolation, "cannot go 1 DT under while keeping 3 %");
 
 console.log("pricing and matching tests passed");
+
+// Stock import rules (ERP export): discount, 100 % discount, negative stock, references.
+const { stockRowFacts, cleanReference } = await import("./csv");
+const lot = stockRowFacts({ purchasePrice: "470", discountPct: "5", stockQty: "18", manufacturerRef: "T650A11E", refReliability: "Présente dans la désignation" });
+assert.equal(lot.purchase, 446.5);
+assert.ok(lot.note?.includes("remise 5 %"));
+const promo = stockRowFacts({ purchasePrice: "1200", discountPct: "100", stockQty: "-18" });
+assert.equal(promo.purchase, 1200, "100 % discount is ignored");
+assert.equal(promo.stockQty, 0, "negative stock counts as 0");
+assert.ok(promo.tags.includes("Stock négatif ERP (-18)") && promo.tags.includes("Remise 100 % ignorée"));
+assert.deepEqual(cleanReference("Toner e-STUDIO 2309A: T-2309E", "Probable – à vérifier"), { ref: "T-2309E", alt: null });
+assert.deepEqual(cleanReference("TK-475 (1T02K30NL0)"), { ref: "TK-475", alt: "1T02K30NL0" });
+assert.deepEqual(cleanReference("x", "Article générique – pas de réf. fabricant"), { ref: null, alt: null });
+console.log("stock import tests passed");

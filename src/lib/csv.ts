@@ -75,6 +75,9 @@ export function cleanReference(raw: string | undefined, reliability?: string): {
     return { ref: null, alt: null };
   }
   if (/mod[eè]le non pr[eé]cis[eé]/i.test(text)) return { ref: null, alt: null };
+  // "Toner e-STUDIO 2309A: T-2309E" → the reference is after the colon.
+  const colon = text.match(/:\s*([^:]+)$/);
+  if (colon) return cleanReference(colon[1], reliability);
   const paren = text.match(/^(.*?)\s*\(([^)]*)\)/);
   let main = paren ? paren[1] : text;
   let alt = paren ? paren[2] : null;
@@ -228,4 +231,44 @@ export function toCsv(rows: Record<string, unknown>[]): string {
     return s;
   };
   return [headers.join(","), ...rows.map((r) => headers.map((h) => esc(r[h])).join(","))].join("\n");
+}
+
+/** Tags the importer sets itself (replaced on each re-import, user tags are kept). */
+export const AUTO_TAG_PREFIXES = ["Réf : ", "Stock négatif ERP", "Remise 100 % ignorée"];
+
+const num = (v: string | undefined) => n(String(v ?? "").replace(/\s/g, "").replace(",", "."));
+
+/**
+ * Stock values of one import row, with the rules for ERP exports:
+ * - cost = unit price × (1 − discount %); a 100 % discount (free/promo line) is ignored;
+ * - negative stock (sold before being entered) counts as 0 and is tagged;
+ * - the proposed reference is cleaned; its alternative becomes the model.
+ */
+export function stockRowFacts(row: Record<string, string>) {
+  const { ref, alt } = cleanReference(row.manufacturerRef || row.reference, row.refReliability);
+  const unit = row.purchasePrice ? num(row.purchasePrice) : null;
+  const rawDiscount = Math.max(0, num(row.discountPct));
+  const discountIgnored = rawDiscount >= 100;
+  const discount = discountIgnored ? 0 : Math.min(rawDiscount, 99.99);
+  const purchase = unit != null ? Math.round(unit * (1 - discount / 100) * 1000) / 1000 : null;
+  const hasQty = row.stockQty !== undefined && row.stockQty !== "";
+  const rawQty = hasQty ? Math.round(num(row.stockQty)) : null;
+  const tags = [
+    row.refReliability ? `Réf : ${row.refReliability.split(/\s[–-]\s|\s\(/)[0].trim()}` : null,
+    rawQty != null && rawQty < 0 ? `Stock négatif ERP (${rawQty})` : null,
+    discountIgnored ? "Remise 100 % ignorée" : null,
+  ].filter((t): t is string => Boolean(t));
+  const fmt = (v: number) => v.toLocaleString("fr-FR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  const note =
+    unit != null && (rawDiscount > 0 || discountIgnored)
+      ? `Prix unitaire ${fmt(unit)} DT, remise ${rawDiscount.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} %${discountIgnored ? " (ignorée : ligne gratuite/promo)" : ""} → coût ${fmt(purchase!)} DT`
+      : null;
+  return {
+    ref,
+    model: row.model || (alt && alt !== ref ? alt : null),
+    purchase,
+    stockQty: rawQty == null ? null : Math.max(0, rawQty),
+    tags,
+    note,
+  };
 }

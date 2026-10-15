@@ -39,7 +39,7 @@ import { runMonitoringJob } from "@/lib/monitoring";
 import { fetchLiveOffer } from "@/lib/extract";
 import { findByReference, rebuildCatalog, sellerExclusions, type ReferenceSearchResult } from "@/lib/catalog";
 import { kickScheduler } from "@/lib/scheduler";
-import { cleanReference, parseSpreadsheet } from "@/lib/csv";
+import { AUTO_TAG_PREFIXES, cleanReference, parseSpreadsheet, stockRowFacts } from "@/lib/csv";
 import { vatRateFor } from "@/lib/tax";
 import { recommendPrice, costFromProduct, taxFromWorkspace } from "@/lib/pricing";
 import { pricingRecommendations } from "@/db/schema";
@@ -468,14 +468,9 @@ export async function importProductsAction(formData: FormData) {
   for (const row of rows) {
     const name = row.name || row.Name;
     if (!name) continue;
-    // "TK-475 (1T02K30NL0)" → reference TK-475, alternative 1T02K30NL0 kept as model (both are searched).
-    const { ref, alt } = cleanReference(row.manufacturerRef || row.reference, row.refReliability);
-    const model = row.model || (alt && alt !== ref ? alt : null);
+    // Cleaned reference (+ alternative as model), cost net of discount, negative stock as 0, auto tags.
+    const { ref, model, purchase, stockQty, tags: autoTags, note } = stockRowFacts(row);
     const barcode = row.barcode || row.ean || null;
-    // Purchase price net of the line discount ("Remise" in %).
-    const discount = Math.min(100, Math.max(0, n(String(row.discountPct ?? "").replace(",", "."))));
-    const purchase = row.purchasePrice ? n(String(row.purchasePrice).replace(",", ".")) * (1 - discount / 100) : null;
-    const reliabilityTag = row.refReliability ? `Réf : ${row.refReliability.split(/\s[–-]\s|\s\(/)[0].trim()}` : null;
     const unambiguous = (k: string) => k.length >= 3 && (fileNamesPerRef.get(k)?.size ?? 1) <= 1 && existingByKey.has(k);
     const keyMatch = [ref, barcode, row.sku].map(keyOf).find(unambiguous);
     const current = existingByName.get(keyOf(name)) ?? (keyMatch ? existingByKey.get(keyMatch)! : null);
@@ -483,11 +478,12 @@ export async function importProductsAction(formData: FormData) {
       // Only overwrite what the file actually provides, so a "Réf + Qté" stock list keeps prices intact.
       const set: Partial<typeof products.$inferInsert> = { updatedAt: new Date() };
       if (purchase != null) set.purchasePrice = moneyStr(purchase);
-      if (ref && !current.manufacturerRef) set.manufacturerRef = ref;
-      if (reliabilityTag) set.tags = [...(current.tags ?? []).filter((t) => !t.startsWith("Réf : ")), reliabilityTag];
+      if (ref && ref !== current.manufacturerRef) set.manufacturerRef = ref; // the file is the source of truth
+      set.tags = [...(current.tags ?? []).filter((t) => !AUTO_TAG_PREFIXES.some((p) => t.startsWith(p))), ...autoTags];
+      if (note) set.notes = note;
       if (row.actualSellingPrice) set.actualSellingPrice = moneyStr(n(row.actualSellingPrice));
       if (row.targetSellingPrice) set.targetSellingPrice = moneyStr(n(row.targetSellingPrice));
-      if (row.stockQty !== undefined && row.stockQty !== "") set.stockQty = Math.round(n(row.stockQty));
+      if (stockQty != null) set.stockQty = stockQty;
       if (row.vatRate) set.vatRate = moneyStr(asRate(row.vatRate));
       if (row.minProfitMargin) set.minProfitMargin = moneyStr(asRate(row.minProfitMargin));
       if (row.brand && !current.brand) set.brand = row.brand;
@@ -525,18 +521,19 @@ export async function importProductsAction(formData: FormData) {
       minProfitMargin: moneyStr(asRate(row.minProfitMargin) || n(auth.workspace.defaultMinMargin)),
       targetSellingPrice: row.targetSellingPrice ? moneyStr(n(row.targetSellingPrice)) : null,
       actualSellingPrice: row.actualSellingPrice ? moneyStr(n(row.actualSellingPrice)) : null,
-      stockQty: Math.round(n(row.stockQty)),
+      stockQty: stockQty ?? 0,
       supplierName: row.supplierName || null,
       warranty: row.warranty || null,
       condition: row.condition || "new",
       description: row.description || null,
+      notes: note,
       specifications: parseSpecLines(row.description),
       tags: [
         ...(row.tags || "")
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
-        ...(reliabilityTag ? [reliabilityTag] : []),
+        ...autoTags,
       ],
       isDemo: false,
     });

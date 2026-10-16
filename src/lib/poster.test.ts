@@ -151,7 +151,7 @@ assert.equal(posterFileName("Pack Rentrée 2026 !"), "pack-rentree-2026-1080x108
 {
   const p = product();
   const d = { ...defaultDesign([p], { brand: "numedia", lang: "fr" }), theme: "scene" as const };
-  assert.ok(checkPoster(d, [p]).errors.some((e) => e.includes("scène")));
+  assert.ok(checkPoster(d, [p]).errors.some((e) => e.includes("scène IA")));
 }
 
 console.log("poster tests passed");

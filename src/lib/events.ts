@@ -256,18 +256,3 @@ export function defaultSceneQuery(products: Array<{ name: string; category: stri
   ];
   return rules.find(([re]) => re.test(text))?.[1] ?? "wood table";
 }
-
-export const SCENE_CHIPS: Array<{ q: string; label: string }> = [
-  { q: "kitchen", label: "Cuisine" },
-  { q: "sofa", label: "Salon" },
-  { q: "office desk", label: "Bureau" },
-  { q: "bedroom", label: "Chambre" },
-  { q: "beach", label: "Plage" },
-  { q: "forest", label: "Forêt" },
-  { q: "garden", label: "Jardin" },
-  { q: "cafe", label: "Café" },
-  { q: "wood table", label: "Table en bois" },
-  { q: "flowers", label: "Fleurs" },
-  { q: "snow", label: "Neige" },
-  { q: "lantern", label: "Lanternes" },
-];

@@ -54,10 +54,9 @@ Promo posters (PNG **1080 × 1080**) from real catalogue products, in French, Ar
   Arabic), tag and offer end date and adds a seasonal decoration. Lunar dates are estimates (« à confirmer »).
   **Soldes**: export is blocked unless the poster shows a verified crossed-out price and at least 20 % off
   (loi n° 40 de 1998).
-- **Scène réaliste**: CC0 photos (StockSnap, searched through the Openverse API — no key, 200 searches
-  per day, cached) as background; the product is cut out automatically (edge-aware removal of the white
-  studio background) and placed with a contact shadow. Suggested scene from the product category
-  (kitchen for appliances, office for printers…). Only `cdn.stocksnap.io` images are accepted.
+- **Scène IA** style: the product is cut out automatically (edge-aware removal of the white studio
+  background) and placed on an AI background with contact shadow. (The CC0 stock-photo picker was removed
+  on 2026-10-16; designs that still use a StockSnap photo keep rendering through the image proxy.)
 - **AI scenes (free)**: Cloudflare Workers AI free tier (FLUX.1 schnell, Apache-2.0) paints an empty background
   for the products, the ambiance (Mediterranean kitchen, Sidi Bou Saïd, médina, Sahara, Aïn Draham…) and the
   event; the real product photo is then cut out and placed with contact shadow, reflection and colour match,

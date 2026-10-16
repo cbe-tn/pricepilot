@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, CalendarDays, Sparkles, Download, Image as ImageIcon, RotateCcw, Save, Search, ShieldCheck, Shuffle } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Download, RotateCcw, Save, ShieldCheck, Shuffle, Sparkles } from "lucide-react";
 import { Badge, Button, Card, Field, Input, Select } from "@/components/ui";
 import { drawPoster, type Box, type PosterAssets } from "@/components/marketing/render";
 import { generateSceneAction, refreshPhotoAction, saveCampaignAction, validateCampaignAction } from "@/lib/marketing-actions";
@@ -20,7 +20,7 @@ import {
   type PosterProduct,
 } from "@/lib/poster";
 import { formatWhen, relativeTime } from "@/lib/money";
-import { defaultSceneQuery, eventById, SCENE_CHIPS, upcomingEvents } from "@/lib/events";
+import { eventById, upcomingEvents } from "@/lib/events";
 
 type Version = { at: string; design: PosterDesign };
 
@@ -136,7 +136,8 @@ export function PosterEditor({
 
   // Random style and brand colour, layout back to the template defaults.
   const surprise = () => {
-    const others = THEMES.filter((t) => t.value !== design.theme);
+    // "Scène IA" needs a generated background first, so the surprise picks among the other styles.
+    const others = THEMES.filter((t) => t.value !== design.theme && t.value !== "scene");
     const theme = others[Math.floor(Math.random() * others.length)].value;
     const accent = Math.random() < 0.6 ? design.accent : BRAND_COLORS[Math.floor(Math.random() * BRAND_COLORS.length)].value;
     const home = { dx: 0, dy: 0, scale: 1 };
@@ -333,14 +334,6 @@ export function PosterEditor({
             current={design.scene}
             reflection={design.reflection}
             onReflection={(reflection) => update({ reflection })}
-            onPick={(scene) => update({ scene, theme: "scene" })}
-          />
-        </Card>
-
-        <Card>
-          <ScenePicker
-            scene={design.scene}
-            initialQuery={eventById(design.event)?.scene ?? defaultSceneQuery(products)}
             onPick={(scene) => update({ scene, theme: "scene" })}
           />
         </Card>
@@ -628,93 +621,6 @@ function EventPicker({ value, onChange }: { value: string; onChange: (id: string
 
 type SceneResult = { url: string; thumb: string; title: string; creator: string; landing: string };
 
-/** Realistic backgrounds (CC0 photos); picking one switches the poster to the "Scène réaliste" style. */
-function ScenePicker({ scene, initialQuery, onPick }: { scene: SceneResult | null; initialQuery: string; onPick: (s: SceneResult) => void }) {
-  const [q, setQ] = useState(initialQuery);
-  const [results, setResults] = useState<SceneResult[]>([]);
-  const [state, setState] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
-
-  const search = useCallback(async (query: string) => {
-    if (!query.trim()) return;
-    setState({ loading: true, error: null });
-    try {
-      const res = await fetch(`/api/marketing/scenes?q=${encodeURIComponent(query)}`);
-      const data = (await res.json()) as { scenes: SceneResult[]; error?: string };
-      setResults(data.scenes);
-      setState({ loading: false, error: data.error ?? (data.scenes.length ? null : "Aucune photo pour cette recherche — essayez un mot en anglais (kitchen, beach…).") });
-    } catch {
-      setState({ loading: false, error: "Recherche impossible pour le moment." });
-    }
-  }, []);
-
-  useEffect(() => {
-    // First suggestions for the products (kitchen for appliances, office for printers…).
-    const t = setTimeout(() => void search(initialQuery), 0);
-    return () => clearTimeout(t);
-  }, [initialQuery, search]);
-
-  return (
-    <div>
-      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-        <ImageIcon size={16} /> Scène réaliste
-      </h2>
-      <p className="mb-2 text-xs text-[#6b858c]">
-        Le produit est détouré automatiquement et posé dans une vraie photo (libre de droits CC0, usage commercial autorisé). Choisir une photo active le style « Scène réaliste ».
-      </p>
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        {SCENE_CHIPS.map((c) => (
-          <button
-            key={c.q}
-            type="button"
-            onClick={() => {
-              setQ(c.q);
-              void search(c.q);
-            }}
-            className={`rounded-full border px-2.5 py-1 text-xs ${q === c.q ? "border-[#0b4a56] bg-[#0b4a56] text-white" : "border-[#d7e3e6] bg-white text-[#0b4a56] hover:border-[#0b4a56]"}`}
-          >
-            {c.label}
-          </button>
-        ))}
-      </div>
-      <form
-        className="mb-3 flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void search(q);
-        }}
-      >
-        <Input className="h-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Recherche en anglais : kitchen, beach, forest…" />
-        <Button size="sm" type="submit" variant="secondary" disabled={state.loading}>
-          <Search size={14} /> {state.loading ? "…" : "Chercher"}
-        </Button>
-      </form>
-      {state.error ? <p className="mb-2 text-xs text-[#8a6100]">{state.error}</p> : null}
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-        {results.map((s) => (
-          <button
-            key={s.url}
-            type="button"
-            onClick={() => onPick(s)}
-            title={`${s.title} — ${s.creator}`}
-            className={`overflow-hidden rounded-lg border-2 ${scene?.url === s.url ? "border-[#0b8fa3] ring-2 ring-[#0b8fa3]/30" : "border-transparent hover:border-[#0b4a56]"}`}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={s.thumb} alt={s.title} loading="lazy" className="block aspect-square w-full object-cover" />
-          </button>
-        ))}
-      </div>
-      {scene ? (
-        <p className="mt-2 text-[11px] text-[#6b858c]">
-          Photo : « {scene.title} » par {scene.creator || "auteur inconnu"} —{" "}
-          <a href={scene.landing} target="_blank" rel="noreferrer" className="underline">
-            StockSnap (CC0)
-          </a>
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 /**
  * Free AI backgrounds (Cloudflare Workers AI): the model paints an empty scene for the products and the
  * event; the real product photo is then placed on it, so the product itself is never redrawn.
@@ -779,7 +685,7 @@ function AiScenePanel({
       ) : (
         <div className="rounded-lg bg-[#fff4d6] p-3 text-xs text-[#8a6100]">
           Génération IA pas encore activée. C’est gratuit : créez un compte Cloudflare (sans carte bancaire), puis ajoutez sur Vercel les variables
-          <code className="mx-1">CLOUDFLARE_ACCOUNT_ID</code>et<code className="mx-1">CLOUDFLARE_AI_TOKEN</code>(jeton « Workers AI »). En attendant, utilisez les photos réelles ci-dessous.
+          <code className="mx-1">CLOUDFLARE_ACCOUNT_ID</code>et<code className="mx-1">CLOUDFLARE_AI_TOKEN</code>(jeton « Workers AI »).
         </div>
       )}
       {msg ? <p className={`mt-2 text-sm ${msg.tone === "ok" ? "text-[#0c6b4d]" : "text-[#b42323]"}`}>{msg.text}</p> : null}

@@ -66,7 +66,7 @@ export type PosterDesign = {
   layout: Record<PosterElement, ElementLayout>;
   /** Tunisian commercial event (id from TN_EVENTS) or "" for none: decoration and legal checks. */
   event: string;
-  /** Realistic background photo (CC0, StockSnap via Openverse) for the "Scène réaliste" style. */
+  /** Background of the "Scène IA" style: an AI scene stored for the workspace (older designs may hold a CC0 stock photo). */
   scene: PosterScene | null;
   /** Mirror reflection of the product on the surface (realistic scene style). */
   reflection: boolean;
@@ -92,7 +92,7 @@ export const THEMES: Array<{ value: PosterTheme; label: string }> = [
   { value: "flash", label: "Vente flash" },
   { value: "minimal", label: "Éditorial" },
   { value: "aurora", label: "Aurora" },
-  { value: "scene", label: "Scène réaliste" },
+  { value: "scene", label: "Scène IA" },
 ];
 
 const DEFAULT_LAYOUT: Record<PosterElement, ElementLayout> = {
@@ -234,7 +234,7 @@ export function checkPoster(design: PosterDesign, products: PosterProduct[]): Po
       if (real < 20) errors.push(`Soldes : la remise minimale légale est de 20 % (ici ${real.toLocaleString("fr-FR")} %).`);
     }
   }
-  if (design.theme === "scene" && !design.scene) errors.push("Choisissez une photo de scène pour le style « Scène réaliste ».");
+  if (design.theme === "scene" && !design.scene) errors.push("Générez une scène IA (ou choisissez-en une déjà générée) pour le style « Scène IA ».");
 
   if (!(design.lang === "ar" ? design.titleAr : design.title).trim()) errors.push("Le titre de l'affiche est vide.");
   if (design.validUntil && new Date(design.validUntil).getTime() < new Date(new Date().toDateString()).getTime()) {

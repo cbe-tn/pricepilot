@@ -87,7 +87,8 @@ export async function generateSceneImage(prompt: string): Promise<{ ok: true; by
     const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${model}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, steps: 6, seed: Math.floor(Math.random() * 1_000_000) }),
+      // The model accepts only prompt and steps (no seed): each call already gives a new image.
+      body: JSON.stringify({ prompt, steps: 6 }),
       signal: AbortSignal.timeout(55_000),
     });
     const type = res.headers.get("content-type") ?? "";

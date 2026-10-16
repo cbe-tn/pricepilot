@@ -9,14 +9,14 @@
 import { and, asc, eq, isNull, lte, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { randomUUID } from "crypto";
-import { competitors, jobLeases, products, userSettings, users, workspaces } from "@/db/schema";
+import { competitors, jobLeases, products, userSettings, users, workspaces, type Product } from "@/db/schema";
 import { autoMatchProduct, matchOwnListing, ownShopFor, searchTermsForProduct } from "@/lib/catalog";
 import { runMonitoringJob } from "@/lib/monitoring";
 import type { AuthContext } from "@/lib/auth";
 
 const TICK_MS = 60 * 1000;
 const MATCH_INTERVAL_MS = 24 * 3600 * 1000;
-const MATCH_BATCH = 5; // products per tick, so a big import is spread out politely
+const MATCH_BATCH = 6; // products fetched per batch (searched PARALLEL at a time, politely per site)
 
 type SchedulerState = { timer?: ReturnType<typeof setInterval>; running: boolean; kicked: boolean; lastTick?: Date; lastError?: string };
 const g = globalThis as typeof globalThis & { __pricePilotScheduler?: SchedulerState };
@@ -44,63 +44,93 @@ async function systemAuth(workspaceId: string): Promise<AuthContext | null> {
 const SAFETY_MS = 45_000;
 const timeLeft = (deadline?: number) => (deadline ? deadline - Date.now() > SAFETY_MS : true);
 
-async function autoMatchDue(auth: AuthContext, deadline?: number): Promise<number> {
-  const cutoff = new Date(Date.now() - MATCH_INTERVAL_MS);
-  const due = await db
-    .select()
-    .from(products)
-    .where(
-      and(
-        eq(products.workspaceId, auth.workspace.id),
-        isNull(products.archivedAt),
-        or(isNull(products.lastMatchedAt), lte(products.lastMatchedAt, cutoff)),
-      ),
-    )
-    .orderBy(sql`${products.lastMatchedAt} asc nulls first`, asc(products.createdAt))
-    .limit(MATCH_BATCH);
+/** Products searched at the same time; each competitor site still gets at most one request every 2 s. */
+const PARALLEL = 3;
+
+/**
+ * Works through a queue until it is empty or the deadline approaches: batches of MATCH_BATCH, PARALLEL at a
+ * time. Without a deadline (long-lived server) one batch per tick, the scheduler re-kicks itself.
+ */
+async function drain(fetchBatch: () => Promise<Product[]>, work: (p: Product) => Promise<void>, deadline?: number): Promise<number> {
   let done = 0;
-  for (const p of due) {
-    if (!timeLeft(deadline)) break; // the rest stays due for the next run
-    done += 1;
-    try {
-      if (searchTermsForProduct(p).length) await autoMatchProduct(auth, p);
-    } finally {
-      // Mark as searched even on failure so one bad product never blocks the queue.
-      await db.update(products).set({ lastMatchedAt: new Date() }).where(eq(products.id, p.id));
+  const seen = new Set<string>();
+  for (;;) {
+    if (!timeLeft(deadline)) break;
+    const batch = (await fetchBatch()).filter((p) => !seen.has(p.id));
+    if (!batch.length) break;
+    for (let i = 0; i < batch.length; i += PARALLEL) {
+      if (!timeLeft(deadline)) return done; // the rest stays due for the next run
+      const chunk = batch.slice(i, i + PARALLEL);
+      for (const p of chunk) seen.add(p.id);
+      await Promise.all(chunk.map(work));
+      done += chunk.length;
     }
+    if (!deadline) break;
   }
   return done;
+}
+
+async function autoMatchDue(auth: AuthContext, deadline?: number): Promise<number> {
+  const cutoff = new Date(Date.now() - MATCH_INTERVAL_MS);
+  const fetchBatch = () =>
+    db
+      .select()
+      .from(products)
+      .where(
+        and(
+          eq(products.workspaceId, auth.workspace.id),
+          isNull(products.archivedAt),
+          or(isNull(products.lastMatchedAt), lte(products.lastMatchedAt, cutoff)),
+        ),
+      )
+      .orderBy(sql`${products.lastMatchedAt} asc nulls first`, asc(products.createdAt))
+      .limit(MATCH_BATCH);
+  return drain(
+    fetchBatch,
+    async (p) => {
+      try {
+        if (searchTermsForProduct(p).length) await autoMatchProduct(auth, p);
+      } catch (error) {
+        console.error("[pricepilot] competitor search failed:", error instanceof Error ? error.message : error);
+      } finally {
+        // Mark as searched even on failure so one bad product never blocks the queue.
+        await db.update(products).set({ lastMatchedAt: new Date() }).where(eq(products.id, p.id));
+      }
+    },
+    deadline,
+  );
 }
 
 async function ownListingDue(auth: AuthContext, deadline?: number): Promise<number> {
   if (!(await ownShopFor(auth.workspace.id))) return 0;
   const cutoff = new Date(Date.now() - MATCH_INTERVAL_MS);
-  const due = await db
-    .select()
-    .from(products)
-    .where(
-      and(
-        eq(products.workspaceId, auth.workspace.id),
-        isNull(products.archivedAt),
-        or(isNull(products.ownCheckedAt), lte(products.ownCheckedAt, cutoff)),
-      ),
-    )
-    // Stock first: those are the products we must have online.
-    .orderBy(sql`${products.ownCheckedAt} asc nulls first`, sql`${products.stockQty} > 0 desc`, asc(products.createdAt))
-    .limit(MATCH_BATCH);
-  let done = 0;
-  for (const p of due) {
-    if (!timeLeft(deadline)) break;
-    done += 1;
-    try {
-      if (searchTermsForProduct(p).length) await matchOwnListing(auth, p);
-      else await db.update(products).set({ ownCheckedAt: new Date() }).where(eq(products.id, p.id));
-    } catch (error) {
-      await db.update(products).set({ ownCheckedAt: new Date() }).where(eq(products.id, p.id));
-      console.error("[pricepilot] own-shop lookup failed:", error instanceof Error ? error.message : error);
-    }
-  }
-  return done;
+  const fetchBatch = () =>
+    db
+      .select()
+      .from(products)
+      .where(
+        and(
+          eq(products.workspaceId, auth.workspace.id),
+          isNull(products.archivedAt),
+          or(isNull(products.ownCheckedAt), lte(products.ownCheckedAt, cutoff)),
+        ),
+      )
+      // Stock first: those are the products we must have online.
+      .orderBy(sql`${products.ownCheckedAt} asc nulls first`, sql`${products.stockQty} > 0 desc`, asc(products.createdAt))
+      .limit(MATCH_BATCH);
+  return drain(
+    fetchBatch,
+    async (p) => {
+      try {
+        if (searchTermsForProduct(p).length) await matchOwnListing(auth, p);
+        else await db.update(products).set({ ownCheckedAt: new Date() }).where(eq(products.id, p.id));
+      } catch (error) {
+        await db.update(products).set({ ownCheckedAt: new Date() }).where(eq(products.id, p.id));
+        console.error("[pricepilot] own-shop lookup failed:", error instanceof Error ? error.message : error);
+      }
+    },
+    deadline,
+  );
 }
 
 async function monitoringDue(auth: AuthContext, deadline?: number): Promise<number> {
@@ -166,7 +196,9 @@ export async function schedulerTick(opts?: { budgetMs?: number }): Promise<{ mat
     for (const ws of await db.select({ id: workspaces.id }).from(workspaces)) {
       const auth = await systemAuth(ws.id);
       if (!auth) continue;
-      matched += await autoMatchDue(auth, deadline);
+      // Competitor search gets the first half of the budget so the numedia.tn lookup is never starved.
+      const half = deadline ? Date.now() + (deadline - Date.now()) / 2 : undefined;
+      matched += await autoMatchDue(auth, half);
       matched += await ownListingDue(auth, deadline);
       monitored += await monitoringDue(auth, deadline);
     }

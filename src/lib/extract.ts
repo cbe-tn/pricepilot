@@ -95,9 +95,11 @@ export async function isAllowedByRobots(url: string): Promise<boolean> {
 const lastHit = new Map<string, number>();
 
 export async function politeDelay(host: string) {
-  const wait = (lastHit.get(host) ?? 0) + MIN_DOMAIN_GAP_MS - Date.now();
+  // Reserve the next free slot before waiting, so parallel searches never hit the same site at once.
+  const slot = Math.max(Date.now(), (lastHit.get(host) ?? 0) + MIN_DOMAIN_GAP_MS);
+  lastHit.set(host, slot);
+  const wait = slot - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastHit.set(host, Date.now());
 }
 
 export async function fetchWithTimeout(url: string): Promise<Response> {

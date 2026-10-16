@@ -23,6 +23,11 @@ these shops first.
 | **Recommandations**, **Rapports**, **Historique**, **Tableau de bord** | Recommended prices, exports, price changes, KPIs. |
 | **Import** | CSV/Excel import (French headers supported: Réf, Désignation, Qté, Prix achat HT…). Supplier catalogues with a title block, products spread over several lines and several sheets are handled. Re-imports **update** products by reference (no duplicates). |
 
+The public Numedia product sitemap can be imported with `bun scripts/import-numedia-catalog.ts`
+(set `DATABASE_URL` first). Existing stock products are linked when their title matches uniquely;
+other listings are added with zero stock and no assumed purchase or selling price. Their Numedia
+listing prices are refreshed by the normal own-shop scheduler.
+
 ### Business rules
 
 - **Minimum margin: 3 %**, measured like the original sheet: `(price TTC − purchase TTC) / price TTC`.

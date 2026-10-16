@@ -324,7 +324,7 @@ export function PosterEditor({
             ) : null}
             {showAr ? (
               <>
-                <Field label="العنوان — titre arabe">
+                <Field label="العنوان — titre arabe (tunisien)">
                   <Input dir="rtl" value={design.titleAr} maxLength={80} onChange={(e) => update({ titleAr: e.target.value })} />
                 </Field>
                 {ar ? (
@@ -355,7 +355,7 @@ export function PosterEditor({
               {[0, 1, 2].map((i) => (
                 <div key={i} className="grid gap-1">
                   {showFr ? <Input placeholder={`Avantage ${i + 1} (ex. 2000 Watts)`} value={design.benefits[i] ?? ""} maxLength={40} onChange={(e) => setList("benefits", i, e.target.value)} /> : null}
-                  {showAr ? <Input dir="rtl" placeholder={`ميزة ${i + 1}`} value={design.benefitsAr[i] ?? ""} maxLength={40} onChange={(e) => setList("benefitsAr", i, e.target.value)} /> : null}
+                  {showAr ? <Input dir="rtl" placeholder={`ميزة ${i + 1} (بالتونسي)`} value={design.benefitsAr[i] ?? ""} maxLength={40} onChange={(e) => setList("benefitsAr", i, e.target.value)} /> : null}
                 </div>
               ))}
             </div>

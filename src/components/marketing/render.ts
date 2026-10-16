@@ -462,7 +462,7 @@ export function drawPoster(
     const date = `${dd}-${mm}-${yy}`;
     if (!ar) validity.push(`Offre valable jusqu'au ${date}`);
     // The date is isolated (LRI … PDI) so it keeps its order inside the right-to-left sentence.
-    if (ar || bi) validity.push(`العرض صالح حتى ⁦${date}⁩`);
+    if (ar || bi) validity.push(`العرض صالح لين ⁦${date}⁩`);
   }
   for (const v of validity.reverse()) {
     ctx.fillStyle = pal.text;

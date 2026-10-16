@@ -545,6 +545,78 @@ export function cutout(img: HTMLImageElement): Cutout {
   return result;
 }
 
+const tintCache = new WeakMap<HTMLImageElement, string>();
+/** Average colour of the lower half of the scene (where the product stands). */
+function sceneTint(img: HTMLImageElement): string | null {
+  const hit = tintCache.get(img);
+  if (hit) return hit;
+  try {
+    const c = document.createElement("canvas");
+    c.width = 32;
+    c.height = 32;
+    const x = c.getContext("2d", { willReadFrequently: true })!;
+    x.drawImage(img, 0, img.naturalHeight / 2, img.naturalWidth, img.naturalHeight / 2, 0, 0, 32, 32);
+    const px = x.getImageData(0, 0, 32, 32).data;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      r += px[i];
+      g += px[i + 1];
+      b += px[i + 2];
+    }
+    const n = px.length / 4;
+    const color = `rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`;
+    tintCache.set(img, color);
+    return color;
+  } catch {
+    return null;
+  }
+}
+
+const tintedCache = new WeakMap<HTMLCanvasElement, Map<string, HTMLCanvasElement>>();
+function tinted(src: HTMLCanvasElement, color: string): HTMLCanvasElement {
+  const byColor = tintedCache.get(src) ?? new Map<string, HTMLCanvasElement>();
+  tintedCache.set(src, byColor);
+  const hit = byColor.get(color);
+  if (hit) return hit;
+  const c = document.createElement("canvas");
+  c.width = src.width;
+  c.height = src.height;
+  const x = c.getContext("2d")!;
+  x.drawImage(src, 0, 0);
+  // Soft overlay of the ambient colour, only where the product is (source-atop keeps transparency).
+  x.globalCompositeOperation = "source-atop";
+  x.globalAlpha = 0.14;
+  x.fillStyle = color;
+  x.fillRect(0, 0, c.width, c.height);
+  byColor.set(color, c);
+  return c;
+}
+
+const reflectionCache = new WeakMap<HTMLCanvasElement, HTMLCanvasElement>();
+function reflectionOf(src: HTMLCanvasElement): HTMLCanvasElement {
+  const hit = reflectionCache.get(src);
+  if (hit) return hit;
+  const h = Math.round(src.height * 0.45);
+  const c = document.createElement("canvas");
+  c.width = src.width;
+  c.height = Math.max(1, h);
+  const x = c.getContext("2d")!;
+  x.translate(0, src.height);
+  x.scale(1, -1);
+  x.drawImage(src, 0, 0);
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.globalCompositeOperation = "destination-in";
+  const fade = x.createLinearGradient(0, 0, 0, c.height);
+  fade.addColorStop(0, "rgba(0,0,0,0.28)");
+  fade.addColorStop(1, "rgba(0,0,0,0)");
+  x.fillStyle = fade;
+  x.fillRect(0, 0, c.width, c.height);
+  reflectionCache.set(src, c);
+  return c;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Event decorations (drawn behind all content, kept to the margins)
 // ---------------------------------------------------------------------------------------------
@@ -1089,10 +1161,17 @@ function drawProduct(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAsset
       ctx.fillStyle = shadow;
       ctx.fillRect(x0 - w * 0.1, floor - w * 0.6, w * 1.2, w * 1.2);
       ctx.restore();
+      // Colour match: a touch of the scene's own light on the product, so it does not look pasted.
+      const tint = assets.scene && assets.scene.naturalWidth ? sceneTint(assets.scene) : null;
+      const lit = tint ? tinted(src, tint) : src;
+      if (d.reflection) {
+        // Fading mirror image on the (glossy) surface, as in studio product shots.
+        ctx.drawImage(reflectionOf(lit), x0, floor, w, h * 0.45);
+      }
       ctx.shadowColor = "rgba(0,0,0,0.4)";
       ctx.shadowBlur = 30;
       ctx.shadowOffsetY = 12;
-      ctx.drawImage(src, x0, floor - h, w, h);
+      ctx.drawImage(lit, x0, floor - h, w, h);
     } else {
       // Not on a plain white background: present it on a white card instead.
       roundRect(ctx, cell.x + 40, cell.y + 20, cell.w - 80, cell.h - 40, 32);

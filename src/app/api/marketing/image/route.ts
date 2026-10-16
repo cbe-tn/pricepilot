@@ -1,10 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { products } from "@/db/schema";
+import { marketingAssets, products } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { USER_AGENT } from "@/lib/extract";
 import { officialPhotoUrl } from "@/lib/marketing";
-import { SCENE_URL } from "@/lib/scenes";
+import { STOCK_SCENE_URL } from "@/lib/scenes";
 
 export const dynamic = "force-dynamic";
 
@@ -37,10 +37,22 @@ export async function GET(req: Request) {
   const auth = await getAuth();
   if (!auth) return new Response("Non autorisé", { status: 401 });
   const params = new URL(req.url).searchParams;
+  const assetId = params.get("asset");
+  if (assetId) {
+    // AI background generated for this workspace.
+    if (!/^[0-9a-f-]{36}$/i.test(assetId)) return new Response("Image invalide", { status: 400 });
+    const [asset] = await db
+      .select({ mime: marketingAssets.mime, data: marketingAssets.dataBase64 })
+      .from(marketingAssets)
+      .where(and(eq(marketingAssets.id, assetId), eq(marketingAssets.workspaceId, auth.workspace.id)))
+      .limit(1);
+    if (!asset) return new Response("Image introuvable", { status: 404 });
+    return new Response(Buffer.from(asset.data, "base64"), { headers: { "Content-Type": asset.mime, "Cache-Control": "private, max-age=31536000, immutable" } });
+  }
   const scene = params.get("scene");
   if (scene) {
     // Realistic background: only the CC0 StockSnap CDN is allowed.
-    if (!SCENE_URL.test(scene)) return new Response("Scène invalide", { status: 400 });
+    if (!STOCK_SCENE_URL.test(scene)) return new Response("Scène invalide", { status: 400 });
     try {
       const res = await fetch(scene, { headers: { "User-Agent": USER_AGENT, Accept: "image/jpeg,image/*" }, signal: AbortSignal.timeout(15_000) });
       const type = res.headers.get("content-type") ?? "";

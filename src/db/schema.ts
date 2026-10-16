@@ -622,6 +622,23 @@ export const marketingCampaigns = pgTable(
   (t) => [index("marketing_campaigns_workspace_idx").on(t.workspaceId, t.updatedAt)],
 );
 
+// AI-generated poster backgrounds (no file storage on this deployment: the JPEG is kept as base64).
+export const marketingAssets = pgTable(
+  "marketing_assets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").references(() => marketingCampaigns.id, { onDelete: "set null" }),
+    prompt: text("prompt").notNull(),
+    mime: text("mime").default("image/jpeg").notNull(),
+    dataBase64: text("data_base64").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("marketing_assets_workspace_idx").on(t.workspaceId, t.createdAt), index("marketing_assets_campaign_idx").on(t.campaignId)],
+);
+
 export type Workspace = typeof workspaces.$inferSelect;
 export type MarketingCampaign = typeof marketingCampaigns.$inferSelect;
 export type User = typeof users.$inferSelect;

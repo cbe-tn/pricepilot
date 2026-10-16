@@ -68,6 +68,8 @@ export type PosterDesign = {
   event: string;
   /** Realistic background photo (CC0, StockSnap via Openverse) for the "Scène réaliste" style. */
   scene: PosterScene | null;
+  /** Mirror reflection of the product on the surface (realistic scene style). */
+  reflection: boolean;
 };
 
 export type PosterScene = { url: string; thumb: string; title: string; creator: string; landing: string };
@@ -138,6 +140,7 @@ export function defaultDesign(products: PosterProduct[], opts: { brand: PosterBr
     layout: structuredClone(DEFAULT_LAYOUT),
     event: "",
     scene: null,
+    reflection: true,
   };
 }
 

@@ -1,16 +1,19 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { Anton, Cairo, Montserrat, Playfair_Display } from "next/font/google";
 import { db } from "@/db";
-import { marketingCampaigns } from "@/db/schema";
+import { marketingAssets, marketingCampaigns } from "@/db/schema";
 import { PosterEditor } from "@/components/marketing/PosterEditor";
 import { PageHeader } from "@/components/ui";
 import { requirePageAuth } from "@/lib/page-auth";
 import { loadPosterProducts } from "@/lib/marketing";
 import { normalizeDesign, type PosterDesign } from "@/lib/poster";
+import { AI_SCENES_PER_DAY, AMBIANCES, aiScenesConfigured } from "@/lib/ai-scenes";
 
 export const metadata = { title: "Affiche" };
+// Server actions of this page include AI scene generation (about 10 s).
+export const maxDuration = 60;
 
 // Poster typography: Montserrat (Latin, like NUMEDIA's posters), Cairo (Arabic + Latin digits),
 // Anton (condensed display, flash/podium styles) and Playfair Display (editorial style).
@@ -30,6 +33,12 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
     .limit(1);
   if (!campaign) notFound();
   const products = await loadPosterProducts(auth.workspace.id, campaign.productIds);
+  const generated = await db
+    .select({ id: marketingAssets.id })
+    .from(marketingAssets)
+    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), eq(marketingAssets.campaignId, campaign.id)))
+    .orderBy(desc(marketingAssets.createdAt))
+    .limit(20);
 
   return (
     // The font variables make Next load both families (the UI keeps its own font); the canvas draws with them.
@@ -54,6 +63,15 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
         }}
         initialProducts={products}
         fonts={{ latin: montserrat.style.fontFamily, arabic: cairo.style.fontFamily, display: anton.style.fontFamily, serif: playfair.style.fontFamily }}
+        ai={{
+          enabled: aiScenesConfigured(),
+          perDay: AI_SCENES_PER_DAY,
+          ambiances: AMBIANCES.map(({ id, label }) => ({ id, label })),
+          generated: generated.map((g) => {
+            const url = `/api/marketing/image?asset=${g.id}`;
+            return { url, thumb: url, title: "Scène IA", creator: "Image générée par IA (FLUX.1 schnell, Cloudflare)", landing: "" };
+          }),
+        }}
       />
     </div>
   );

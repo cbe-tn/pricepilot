@@ -2,15 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { marketingCampaigns, products } from "@/db/schema";
+import { marketingAssets, marketingCampaigns, products } from "@/db/schema";
 import { getAuth, writeAudit } from "@/lib/auth";
 import { loadPosterProducts, officialPhotoUrl } from "@/lib/marketing";
-import { TN_EVENTS } from "@/lib/events";
+import { defaultSceneQuery, TN_EVENTS } from "@/lib/events";
+import { AI_SCENES_PER_DAY, AMBIANCES, aiScenesConfigured, buildScenePrompt, generateSceneImage } from "@/lib/ai-scenes";
 import { SCENE_URL } from "@/lib/scenes";
-import { applyEvent, BRAND_COLORS, checkPoster, defaultDesign, MAX_POSTER_PRODUCTS, normalizeDesign, THEMES, type PosterCheck, type PosterDesign, type PosterProduct } from "@/lib/poster";
+import { applyEvent, BRAND_COLORS, checkPoster, defaultDesign, MAX_POSTER_PRODUCTS, normalizeDesign, THEMES, type PosterCheck, type PosterDesign, type PosterProduct, type PosterScene } from "@/lib/poster";
 
 const MAX_VERSIONS = 15;
 
@@ -44,6 +45,7 @@ const designSchema = z.object({
   showDiscount: z.boolean(),
   productOrder: z.array(z.string().uuid()).max(MAX_POSTER_PRODUCTS),
   layout: z.object({ title: layout, products: layout, price: layout, benefits: layout }),
+  reflection: z.boolean(),
   event: z.union([z.literal(""), z.enum(TN_EVENTS.map((e) => e.id) as [string, ...string[]])]),
   // Scene photos come only from the CC0 StockSnap CDN (served through our image proxy).
   scene: z
@@ -52,7 +54,7 @@ const designSchema = z.object({
       thumb: z.string().regex(SCENE_URL),
       title: text(200),
       creator: text(200),
-      landing: z.string().url().max(500),
+      landing: z.string().max(500),
     })
     .nullable(),
 });
@@ -178,4 +180,38 @@ export async function refreshPhotoAction(productId: string): Promise<{ ok: boole
   if (!product) return { ok: false };
   await db.update(products).set({ imageUrl: null }).where(eq(products.id, product.id));
   return { ok: Boolean(await officialPhotoUrl({ ...product, imageUrl: null })) };
+}
+
+type GenerateResult = { ok: true; scene: PosterScene; left: number } | { ok: false; error: string };
+
+/**
+ * Generates an empty, product-free background with the free Cloudflare AI tier and stores it for the
+ * campaign. Only the ambiance, the event mood and optional details are sent — never prices or names.
+ */
+export async function generateSceneAction(campaignId: string, ambianceId: string, details: string): Promise<GenerateResult> {
+  const auth = await mustAuth();
+  const campaign = await ownCampaign(auth.workspace.id, campaignId);
+  if (!campaign) return { ok: false, error: "Campagne introuvable." };
+  if (!aiScenesConfigured()) return { ok: false, error: "Génération IA gratuite non configurée : ajoutez CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_AI_TOKEN sur Vercel." };
+  if (!AMBIANCES.some((a) => a.id === ambianceId)) return { ok: false, error: "Ambiance inconnue." };
+  const since = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+  const [{ used }] = await db
+    .select({ used: sql<number>`count(*)::int` })
+    .from(marketingAssets)
+    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), gte(marketingAssets.createdAt, since)));
+  if (used >= AI_SCENES_PER_DAY) return { ok: false, error: `Limite de ${AI_SCENES_PER_DAY} scènes IA par jour atteinte — réessayez demain.` };
+
+  const facts = await loadPosterProducts(auth.workspace.id, campaign.productIds);
+  const design = campaign.design as Partial<PosterDesign>;
+  const prompt = buildScenePrompt({ ambianceId, sceneQuery: defaultSceneQuery(facts), eventId: design.event, details: String(details ?? "") });
+  const gen = await generateSceneImage(prompt);
+  if (!gen.ok) return gen;
+  const [asset] = await db
+    .insert(marketingAssets)
+    .values({ workspaceId: auth.workspace.id, campaignId: campaign.id, prompt, mime: gen.mime, dataBase64: gen.bytes.toString("base64") })
+    .returning({ id: marketingAssets.id });
+  await writeAudit(auth, "generate_scene", "marketing_campaign", campaign.id, { ambiance: ambianceId });
+  const url = `/api/marketing/image?asset=${asset.id}`;
+  const label = AMBIANCES.find((a) => a.id === ambianceId)?.label ?? "Scène IA";
+  return { ok: true, left: AI_SCENES_PER_DAY - used - 1, scene: { url, thumb: url, title: label, creator: "Image générée par IA (FLUX.1 schnell, Cloudflare)", landing: "" } };
 }

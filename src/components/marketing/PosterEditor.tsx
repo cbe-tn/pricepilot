@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, CalendarDays, Download, Image as ImageIcon, RotateCcw, Save, Search, ShieldCheck, Shuffle } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Sparkles, Download, Image as ImageIcon, RotateCcw, Save, Search, ShieldCheck, Shuffle } from "lucide-react";
 import { Badge, Button, Card, Field, Input, Select } from "@/components/ui";
 import { drawPoster, type Box, type PosterAssets } from "@/components/marketing/render";
-import { refreshPhotoAction, saveCampaignAction, validateCampaignAction } from "@/lib/marketing-actions";
+import { generateSceneAction, refreshPhotoAction, saveCampaignAction, validateCampaignAction } from "@/lib/marketing-actions";
 import {
   BRAND_COLORS,
   checkPoster,
@@ -39,10 +39,12 @@ export function PosterEditor({
   campaign,
   initialProducts,
   fonts,
+  ai,
 }: {
   campaign: { id: string; name: string; status: string; validatedAt: string | null; design: PosterDesign; versions: Version[] };
   initialProducts: PosterProduct[];
   fonts: PosterAssets["fonts"];
+  ai: { enabled: boolean; perDay: number; ambiances: Array<{ id: string; label: string }>; generated: SceneResult[] };
 }) {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -87,7 +89,9 @@ export function PosterEditor({
       const logoSrc = design.brand === "cbe" ? "/brand/logo-full.png" : "/brand/numedia-logo.webp";
       const [logo, scene, ...photos] = await Promise.all([
         loadImage(logoSrc),
-        sceneUrl ? loadImage(`/api/marketing/image?scene=${encodeURIComponent(sceneUrl)}`) : Promise.resolve(null),
+        sceneUrl
+          ? loadImage(sceneUrl.startsWith("/api/") ? sceneUrl : `/api/marketing/image?scene=${encodeURIComponent(sceneUrl)}`)
+          : Promise.resolve(null),
         ...products.map((p) => (p.hasPhoto ? loadImage(`/api/marketing/image?product=${p.id}&v=${photoVersion}`) : Promise.resolve(null))),
       ]);
       if (!cancelled) setAssets({ fonts, logo, scene, photos: new Map(products.map((p, i) => [p.id, photos[i]])) });
@@ -320,6 +324,17 @@ export function PosterEditor({
 
         <Card>
           <EventPicker value={design.event} onChange={(id) => update(applyEvent(design, id, products))} />
+        </Card>
+
+        <Card>
+          <AiScenePanel
+            campaignId={campaign.id}
+            ai={ai}
+            current={design.scene}
+            reflection={design.reflection}
+            onReflection={(reflection) => update({ reflection })}
+            onPick={(scene) => update({ scene, theme: "scene" })}
+          />
         </Card>
 
         <Card>
@@ -696,6 +711,97 @@ function ScenePicker({ scene, initialQuery, onPick }: { scene: SceneResult | nul
           </a>
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Free AI backgrounds (Cloudflare Workers AI): the model paints an empty scene for the products and the
+ * event; the real product photo is then placed on it, so the product itself is never redrawn.
+ */
+function AiScenePanel({
+  campaignId,
+  ai,
+  current,
+  reflection,
+  onReflection,
+  onPick,
+}: {
+  campaignId: string;
+  ai: { enabled: boolean; perDay: number; ambiances: Array<{ id: string; label: string }>; generated: SceneResult[] };
+  current: SceneResult | null;
+  reflection: boolean;
+  onReflection: (on: boolean) => void;
+  onPick: (s: SceneResult) => void;
+}) {
+  const [ambiance, setAmbiance] = useState("auto");
+  const [details, setDetails] = useState("");
+  const [generated, setGenerated] = useState<SceneResult[]>(ai.generated);
+  const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+  const [pending, start] = useTransition();
+
+  const generate = () =>
+    start(async () => {
+      setMsg(null);
+      const res = await generateSceneAction(campaignId, ambiance, details);
+      if (!res.ok) return setMsg({ tone: "bad", text: res.error });
+      setGenerated((g) => [res.scene, ...g]);
+      onPick(res.scene);
+      setMsg({ tone: "ok", text: `Scène générée et appliquée — encore ${res.left} génération(s) gratuite(s) aujourd’hui.` });
+    });
+
+  return (
+    <div>
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+        <Sparkles size={16} /> Scène générée par IA (gratuit)
+      </h2>
+      <p className="mb-2 text-xs text-[#6b858c]">
+        L’IA crée un décor sur mesure (lumière, matières, ambiance de l’événement) avec un espace libre au premier plan ; votre vraie photo produit y est posée avec
+        ombre, reflet et lumière assortie. Le produit, son logo et les prix ne sont jamais redessinés par l’IA.
+      </p>
+      {ai.enabled ? (
+        <>
+          <div className="grid gap-2 sm:grid-cols-[220px_minmax(0,1fr)_auto]">
+            <Select value={ambiance} onChange={(e) => setAmbiance(e.target.value)} aria-label="Ambiance">
+              {ai.ambiances.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+            </Select>
+            <Input value={details} maxLength={200} onChange={(e) => setDetails(e.target.value)} placeholder="Détails (facultatif, en anglais de préférence) : e.g. cream colours, morning light" />
+            <Button onClick={generate} disabled={pending}>
+              <Sparkles size={14} /> {pending ? "Génération… (≈ 10 s)" : "Générer une scène"}
+            </Button>
+          </div>
+          <p className="mt-1 text-[11px] text-[#6b858c]">Jusqu’à {ai.perDay} scènes par jour (offre gratuite Cloudflare Workers AI, modèle FLUX.1 schnell, usage commercial autorisé).</p>
+        </>
+      ) : (
+        <div className="rounded-lg bg-[#fff4d6] p-3 text-xs text-[#8a6100]">
+          Génération IA pas encore activée. C’est gratuit : créez un compte Cloudflare (sans carte bancaire), puis ajoutez sur Vercel les variables
+          <code className="mx-1">CLOUDFLARE_ACCOUNT_ID</code>et<code className="mx-1">CLOUDFLARE_AI_TOKEN</code>(jeton « Workers AI »). En attendant, utilisez les photos réelles ci-dessous.
+        </div>
+      )}
+      {msg ? <p className={`mt-2 text-sm ${msg.tone === "ok" ? "text-[#0c6b4d]" : "text-[#b42323]"}`}>{msg.text}</p> : null}
+      {generated.length ? (
+        <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
+          {generated.map((s) => (
+            <button
+              key={s.url}
+              type="button"
+              onClick={() => onPick(s)}
+              title={s.title}
+              className={`overflow-hidden rounded-lg border-2 ${current?.url === s.url ? "border-[#0b8fa3] ring-2 ring-[#0b8fa3]/30" : "border-transparent hover:border-[#0b4a56]"}`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={s.thumb} alt={s.title} loading="lazy" className="block aspect-square w-full object-cover" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <label className="mt-3 flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={reflection} onChange={(e) => onReflection(e.target.checked)} /> Reflet du produit sur la surface
+      </label>
     </div>
   );
 }

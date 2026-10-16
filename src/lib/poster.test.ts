@@ -155,3 +155,13 @@ assert.equal(posterFileName("Pack Rentrée 2026 !"), "pack-rentree-2026-1080x108
 }
 
 console.log("poster tests passed");
+
+// AI scene prompt: only the ambiance, event mood and safe details — never prices; always an empty foreground.
+{
+  const { buildScenePrompt, autoAmbiance } = await import("./ai-scenes");
+  const p = buildScenePrompt({ ambianceId: "auto", sceneQuery: "kitchen", eventId: "ramadan", details: "cream colours <script>" });
+  assert.ok(p.includes("marble countertop") && p.includes("Ramadan lanterns") && p.includes("empty surface"));
+  assert.ok(!p.includes("<") && !/\d+\s*DT/.test(p), "details are sanitised and carry no price");
+  assert.equal(autoAmbiance("office desk"), "office");
+  console.log("ai scene prompt tests passed");
+}

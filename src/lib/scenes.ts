@@ -4,8 +4,10 @@
 import { USER_AGENT } from "@/lib/extract";
 import type { PosterScene } from "@/lib/poster";
 
-/** Only this CDN is accepted for scene photos (search results, saved designs and the image proxy). */
-export const SCENE_URL = /^https:\/\/cdn\.stocksnap\.io\/img-thumbs\/(960w|280h)\/[A-Z0-9]+\.jpg$/;
+/** Stock scene photos: only this CDN is accepted (search results and the image proxy). */
+export const STOCK_SCENE_URL = /^https:\/\/cdn\.stocksnap\.io\/img-thumbs\/(960w|280h)\/[A-Z0-9]+\.jpg$/;
+/** Accepted in saved designs: a stock photo, or an AI background stored for the workspace. */
+export const SCENE_URL = /^(https:\/\/cdn\.stocksnap\.io\/img-thumbs\/(960w|280h)\/[A-Z0-9]+\.jpg|\/api\/marketing\/image\?asset=[0-9a-f-]{36})$/;
 export const sceneThumb = (url: string) => url.replace("/960w/", "/280h/");
 
 type OpenverseImage = { id: string; title?: string; url: string; creator?: string; foreign_landing_url?: string; license?: string; source?: string };
@@ -26,7 +28,7 @@ export async function searchScenes(query: string): Promise<{ scenes: PosterScene
     if (!res.ok) return { scenes: [], error: `Recherche d'images indisponible (HTTP ${res.status}).` };
     const data = (await res.json()) as { results?: OpenverseImage[] };
     const scenes = (data.results ?? [])
-      .filter((r) => r.license === "cc0" && SCENE_URL.test(r.url))
+      .filter((r) => r.license === "cc0" && STOCK_SCENE_URL.test(r.url))
       .map((r) => ({
         url: r.url,
         thumb: sceneThumb(r.url),

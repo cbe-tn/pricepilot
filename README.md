@@ -58,7 +58,14 @@ Promo posters (PNG **1080 × 1080**) from real catalogue products, in French, Ar
   per day, cached) as background; the product is cut out automatically (edge-aware removal of the white
   studio background) and placed with a contact shadow. Suggested scene from the product category
   (kitchen for appliances, office for printers…). Only `cdn.stocksnap.io` images are accepted.
-- No paid AI is used yet: layout and texts are deterministic templates. AI copywriting or generated
+- **AI scenes (free)**: Cloudflare Workers AI free tier (FLUX.1 schnell, Apache-2.0) paints an empty background
+  for the products, the ambiance (Mediterranean kitchen, Sidi Bou Saïd, médina, Sahara, Aïn Draham…) and the
+  event; the real product photo is then cut out and placed with contact shadow, reflection and colour match,
+  so the product, logos and prices are never redrawn by the model. Images are stored in `marketing_assets`
+  (base64). Env: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_AI_TOKEN` (token with Workers AI permission),
+  optional `CLOUDFLARE_AI_MODEL`, `AI_SCENES_PER_DAY` (default 40). Table:
+  `marketing_assets (id uuid pk, workspace_id, campaign_id, prompt, mime, data_base64, created_at)`, RLS on.
+- No paid AI is used: layout and texts are deterministic templates. AI copywriting or generated
   backgrounds can be added later behind a server-side API key; prices are never sent to or drawn by a model.
 - Table `marketing_campaigns` (created by hand on Supabase, like other recent columns):
 

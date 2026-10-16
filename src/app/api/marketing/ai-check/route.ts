@@ -1,4 +1,5 @@
 import { generateSceneImage } from "@/lib/ai-scenes";
+import { fetchLiveOffer, USER_AGENT } from "@/lib/extract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -10,6 +11,21 @@ export const maxDuration = 60;
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return new Response("Non autorisé", { status: 401 });
+  // ?page=<competitor product URL>&ref=<reference>: can the deployed app read this page (anti-bot, timeouts)?
+  const params = new URL(req.url).searchParams;
+  const page = params.get("page");
+  if (page) {
+    const started = Date.now();
+    let raw: { status: number; bytes: number; server: string | null } | { error: string };
+    try {
+      const res = await fetch(page, { headers: { "User-Agent": USER_AGENT, Accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
+      raw = { status: res.status, bytes: (await res.text()).length, server: res.headers.get("server") };
+    } catch (e) {
+      raw = { error: e instanceof Error ? e.message : "network" };
+    }
+    const live = await fetchLiveOffer(page, { reference: params.get("ref") ?? undefined });
+    return Response.json({ raw, live: live.ok ? { price: live.offer.priceTnd, refOnPage: live.offer.referenceOnPage } : live, ms: Date.now() - started });
+  }
   const account = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
   const token = process.env.CLOUDFLARE_AI_TOKEN?.trim().replace(/^Bearer\s+/i, "") ?? "";
   const shape = {

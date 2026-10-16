@@ -2,6 +2,7 @@
 // (one 1080 × 1080 canvas), so what is validated is exactly what is downloaded. Prices come from the
 // checked pricing object, never from free text; Arabic is shaped by the browser (direction = "rtl").
 // Each style (template) changes the layout, typography, photo treatment, price treatment and decor.
+import { eventById, type EventDecor } from "@/lib/events";
 import { POSTER_SIZE, type ElementLayout, type PosterDesign, type PosterElement, type PosterPricing, type PosterProduct, type PosterTheme } from "@/lib/poster";
 
 const S = POSTER_SIZE;
@@ -12,6 +13,8 @@ export type PosterAssets = {
   logo: HTMLImageElement | null;
   /** CSS font-family values: Montserrat, Cairo (Arabic), Anton (condensed display), Playfair Display (serif). */
   fonts: { latin: string; arabic: string; display: string; serif: string };
+  /** Realistic background photo for the "scene" style (same-origin, so the canvas stays exportable). */
+  scene?: HTMLImageElement | null;
 };
 
 export type Box = { el: PosterElement; x: number; y: number; w: number; h: number };
@@ -26,7 +29,7 @@ const FLASH_YELLOW = "#ffd400";
 // ---------------------------------------------------------------------------------------------
 
 type PriceStyle = "classic" | "burst" | "box" | "neon";
-type PhotoStyle = "multiply" | "card" | "podium" | "circle" | "tilt" | "glass";
+type PhotoStyle = "multiply" | "card" | "podium" | "circle" | "tilt" | "glass" | "cutout";
 type TagStyle = "pill" | "ribbon" | "outline" | "line" | "none";
 type BenefitStyle = { kind: "bubbles"; cx: number; y: number; r: number } | { kind: "pills"; x: number; y: number; w: number; onAccent?: boolean };
 
@@ -389,7 +392,370 @@ export const TEMPLATES: Record<PosterTheme, Template> = {
       }
     },
   },
+  scene: {
+    dark: true,
+    text: "#ffffff",
+    muted: "#f2f2f2",
+    strike: "#ffffff",
+    titleKind: "latin",
+    titleUpper: false,
+    titleSize: 100,
+    align: "center",
+    title: CLASSIC_TITLE,
+    products: (b) => ({ x: 70, y: 370, w: b ? 770 : 940, h: 480 }),
+    price: CLASSIC_PRICE,
+    priceStyle: "classic",
+    priceKind: "latin",
+    photo: "cutout",
+    tag: "pill",
+    benefits: BUBBLES,
+    background: (ctx, d, assets) => {
+      const img = assets.scene;
+      if (img && img.naturalWidth) {
+        // Cover-fit the photo, then darken top and bottom so texts and price stay readable.
+        const r = Math.max(S / img.naturalWidth, S / img.naturalHeight);
+        const w = img.naturalWidth * r;
+        const h = img.naturalHeight * r;
+        ctx.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+      } else {
+        const g = ctx.createLinearGradient(0, 0, S, S);
+        g.addColorStop(0, "#3b3f46");
+        g.addColorStop(1, "#15171a");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, S, S);
+      }
+      const top = ctx.createLinearGradient(0, 0, 0, 470);
+      top.addColorStop(0, "rgba(0,0,0,0.62)");
+      top.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = top;
+      ctx.fillRect(0, 0, S, 470);
+      const bottom = ctx.createLinearGradient(0, 700, 0, S);
+      bottom.addColorStop(0, "rgba(0,0,0,0)");
+      bottom.addColorStop(1, "rgba(0,0,0,0.72)");
+      ctx.fillStyle = bottom;
+      ctx.fillRect(0, 700, S, S - 700);
+      glow(ctx, 540, 640, 420, hexA(d.accent, 0.12));
+    },
+  },
 };
+
+// ---------------------------------------------------------------------------------------------
+// Product cut-out (white studio background removed) for realistic scenes
+// ---------------------------------------------------------------------------------------------
+
+type Cutout = { canvas: HTMLCanvasElement; ok: boolean };
+const cutoutCache = new WeakMap<HTMLImageElement, Cutout>();
+
+/**
+ * Removes the white background of an official product photo by flood-filling near-white pixels from
+ * the edges (the product itself is never touched, even where it is white inside), feathers the edge
+ * and trims to the product. Falls back (ok = false) when the photo is not on a plain white background.
+ */
+export function cutout(img: HTMLImageElement): Cutout {
+  const hit = cutoutCache.get(img);
+  if (hit) return hit;
+  const scale = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const x = c.getContext("2d", { willReadFrequently: true })!;
+  x.drawImage(img, 0, 0, w, h);
+  let result: Cutout = { canvas: c, ok: false };
+  try {
+    const data = x.getImageData(0, 0, w, h);
+    const px = data.data;
+    const n = w * h;
+    const bg = new Uint8Array(n);
+    const lum = (i: number) => (px[i * 4] * 299 + px[i * 4 + 1] * 587 + px[i * 4 + 2] * 114) / 1000;
+    const whiteish = (i: number, min: number) => {
+      const lo = Math.min(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+      return lo >= min && Math.max(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]) - lo < 18;
+    };
+    const queue = new Int32Array(n);
+    let head = 0;
+    let tail = 0;
+    // Seeds: pure-white border pixels only.
+    const seed = (i: number) => {
+      if (!bg[i] && whiteish(i, 244)) {
+        bg[i] = 1;
+        queue[tail++] = i;
+      }
+    };
+    // Edge-aware growth: spread only to almost identical neighbours, so the fill stops at the product's
+    // outline instead of leaking into white panels of the product itself.
+    const grow = (from: number, i: number) => {
+      if (!bg[i] && whiteish(i, 228) && Math.abs(lum(i) - lum(from)) <= 5) {
+        bg[i] = 1;
+        queue[tail++] = i;
+      }
+    };
+    for (let i = 0; i < w; i++) {
+      seed(i);
+      seed((h - 1) * w + i);
+    }
+    for (let j = 0; j < h; j++) {
+      seed(j * w);
+      seed(j * w + w - 1);
+    }
+    while (head < tail) {
+      const i = queue[head++];
+      const cx = i % w;
+      if (cx > 0) grow(i, i - 1);
+      if (cx < w - 1) grow(i, i + 1);
+      if (i >= w) grow(i, i - w);
+      if (i < n - w) grow(i, i + w);
+    }
+    const share = tail / n;
+    if (share > 0.06 && share < 0.97) {
+      let minX = w;
+      let minY = h;
+      let maxX = 0;
+      let maxY = 0;
+      for (let i = 0; i < n; i++) {
+        if (bg[i]) {
+          px[i * 4 + 3] = 0;
+          continue;
+        }
+        const cx = i % w;
+        const cy = (i - cx) / w;
+        // Feather: light pixels touching the removed background become partly transparent.
+        const edge = (cx > 0 && bg[i - 1]) || (cx < w - 1 && bg[i + 1]) || (i >= w && bg[i - w]) || (i < n - w && bg[i + w]);
+        if (edge) {
+          const lo = Math.min(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+          px[i * 4 + 3] = lo > 200 ? Math.round(255 * Math.min(1, (255 - lo) / 55)) : 255;
+        }
+        if (cx < minX) minX = cx;
+        if (cx > maxX) maxX = cx;
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+      }
+      x.putImageData(data, 0, 0);
+      const t = document.createElement("canvas");
+      t.width = maxX - minX + 1;
+      t.height = maxY - minY + 1;
+      t.getContext("2d")!.drawImage(c, minX, minY, t.width, t.height, 0, 0, t.width, t.height);
+      result = { canvas: t, ok: true };
+    }
+  } catch {
+    // Unreadable pixels (cross-origin image): keep the photo on a card instead.
+  }
+  cutoutCache.set(img, result);
+  return result;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Event decorations (drawn behind all content, kept to the margins)
+// ---------------------------------------------------------------------------------------------
+
+function prng(seedText: string) {
+  let s = 0;
+  for (const ch of seedText) s = (s * 31 + ch.charCodeAt(0)) | 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Random points in the margins only (top band and side strips), never behind products or prices. */
+function marginPoints(rand: () => number, count: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  while (out.length < count) {
+    const zone = rand();
+    if (zone < 0.4) out.push([330 + rand() * 420, 10 + rand() * 110]);
+    else if (zone < 0.7) out.push([10 + rand() * 60, 130 + rand() * 640]);
+    else out.push([1010 + rand() * 60, 130 + rand() * 480]);
+  }
+  return out;
+}
+
+function heart(ctx: Ctx, x: number, y: number, s: number) {
+  ctx.beginPath();
+  ctx.moveTo(x, y + s * 0.3);
+  ctx.bezierCurveTo(x, y, x - s * 0.5, y, x - s * 0.5, y + s * 0.3);
+  ctx.bezierCurveTo(x - s * 0.5, y + s * 0.6, x, y + s * 0.8, x, y + s);
+  ctx.bezierCurveTo(x, y + s * 0.8, x + s * 0.5, y + s * 0.6, x + s * 0.5, y + s * 0.3);
+  ctx.bezierCurveTo(x + s * 0.5, y, x, y, x, y + s * 0.3);
+  ctx.fill();
+}
+
+function flower(ctx: Ctx, x: number, y: number, r: number, petal: string) {
+  ctx.fillStyle = petal;
+  for (let i = 0; i < 5; i++) {
+    const a = (i * Math.PI * 2) / 5;
+    ctx.beginPath();
+    ctx.ellipse(x + Math.cos(a) * r * 0.55, y + Math.sin(a) * r * 0.55, r * 0.5, r * 0.32, a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#f5c518";
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function lantern(ctx: Ctx, x: number, top: number, len: number, gold: string) {
+  ctx.strokeStyle = gold;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, top);
+  ctx.stroke();
+  glow(ctx, x, top + 42, 70, "rgba(255,190,80,0.45)");
+  ctx.fillStyle = gold;
+  ctx.beginPath();
+  ctx.moveTo(x - 14, top + 12);
+  ctx.lineTo(x, top);
+  ctx.lineTo(x + 14, top + 12);
+  ctx.fill();
+  roundRect(ctx, x - 20, top + 12, 40, len, 10);
+  ctx.fillStyle = "rgba(255,200,90,0.85)";
+  ctx.fill();
+  ctx.strokeStyle = gold;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  for (const dx of [-7, 7]) {
+    ctx.beginPath();
+    ctx.moveTo(x + dx, top + 16);
+    ctx.lineTo(x + dx, top + 8 + len);
+    ctx.stroke();
+  }
+  ctx.fillStyle = gold;
+  ctx.fillRect(x - 12, top + 12 + len, 24, 6);
+}
+
+function crescent(ctx: Ctx, x: number, y: number, r: number, color: string) {
+  // Outer disc clipped by an offset inner disc (without erasing the background behind it).
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, S, S);
+  ctx.arc(x + r * 0.42, y - r * 0.18, r * 0.86, 0, Math.PI * 2);
+  ctx.clip("evenodd");
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function pencil(ctx: Ctx, x: number, y: number, len: number, angle: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = "#f6c12d";
+  ctx.fillRect(0, -9, len, 18);
+  ctx.fillStyle = "#e88aa0";
+  ctx.fillRect(-14, -9, 14, 18);
+  ctx.fillStyle = "#b9b9b9";
+  ctx.fillRect(-4, -9, 6, 18);
+  ctx.fillStyle = "#f1d9b5";
+  ctx.beginPath();
+  ctx.moveTo(len, -9);
+  ctx.lineTo(len + 24, 0);
+  ctx.lineTo(len, 9);
+  ctx.fill();
+  ctx.fillStyle = "#333";
+  ctx.beginPath();
+  ctx.moveTo(len + 16, -3);
+  ctx.lineTo(len + 24, 0);
+  ctx.lineTo(len + 16, 3);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawEventDecor(ctx: Ctx, d: PosterDesign, decor: EventDecor, seed: string) {
+  const rand = prng(seed);
+  const gold = "#d4a017";
+  ctx.save();
+  if (decor === "confetti") {
+    const colors = [d.accent, gold, "#ffffff", "#1f9bd1"];
+    for (const [x, y] of marginPoints(rand, 70)) {
+      ctx.fillStyle = colors[Math.floor(rand() * colors.length)];
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rand() * Math.PI);
+      if (rand() < 0.6) ctx.fillRect(-4, -10, 8, 20);
+      else {
+        ctx.beginPath();
+        ctx.arc(0, 0, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  } else if (decor === "hearts") {
+    for (const [x, y] of marginPoints(rand, 16)) {
+      ctx.globalAlpha = 0.6 + rand() * 0.4;
+      ctx.fillStyle = rand() < 0.6 ? d.accent : "#ff7aa2";
+      heart(ctx, x, y - 16, 22 + rand() * 26);
+    }
+  } else if (decor === "flowers") {
+    for (const [x, y] of marginPoints(rand, 12)) flower(ctx, x, y, 18 + rand() * 18, rand() < 0.5 ? "#f7a1c4" : "#ffffff");
+  } else if (decor === "crescent") {
+    lantern(ctx, 360, 20, 62, gold);
+    lantern(ctx, 720, 6, 52, gold);
+    crescent(ctx, 1010, 200, 44, gold);
+    sparkles(ctx, [[960, 260, 10], [1040, 290, 7], [60, 260, 12], [40, 420, 8], [620, 50, 9], [470, 90, 7]], gold);
+  } else if (decor === "flag") {
+    // Red and white bunting, the national colours, strung across the top.
+    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(320, 14);
+    ctx.quadraticCurveTo(540, 60, 760, 14);
+    ctx.stroke();
+    for (let i = 0; i < 11; i++) {
+      const t = i / 10;
+      const x = 320 + t * 440;
+      const y = 14 + Math.sin(t * Math.PI) * 23;
+      ctx.fillStyle = i % 2 ? "#ffffff" : "#e70013";
+      ctx.beginPath();
+      ctx.moveTo(x - 18, y);
+      ctx.lineTo(x + 18, y);
+      ctx.lineTo(x, y + 40);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else if (decor === "percent") {
+    ctx.fillStyle = hexA(d.accent, 0.16);
+    ctx.textAlign = "center";
+    for (const [x, y] of marginPoints(rand, 8)) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(-0.3 + rand() * 0.6);
+      ctx.font = `900 ${Math.round(50 + rand() * 50)}px sans-serif`;
+      ctx.fillText("%", 0, 20);
+      ctx.restore();
+    }
+  } else if (decor === "sun") {
+    ctx.fillStyle = "rgba(255,201,60,0.85)";
+    ctx.beginPath();
+    ctx.arc(560, -10, 70, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,201,60,0.8)";
+    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
+    for (let i = 0; i < 9; i++) {
+      const a = (Math.PI * (i + 0.5)) / 9;
+      ctx.beginPath();
+      ctx.moveTo(560 + Math.cos(a) * 88, -10 + Math.sin(a) * 88);
+      ctx.lineTo(560 + Math.cos(a) * 118, -10 + Math.sin(a) * 118);
+      ctx.stroke();
+    }
+  } else if (decor === "school") {
+    pencil(ctx, 360, 70, 150, -0.12);
+    pencil(ctx, 620, 40, 120, 0.1);
+    pencil(ctx, 30, 520, 140, 1.3);
+    pencil(ctx, 1050, 300, 140, 1.8);
+  } else if (decor === "bolts") {
+    bolts(ctx, [[400, 70, 0.8], [700, 60, 0.7], [40, 640, 1], [1040, 520, 0.8]], d.theme === "flash" ? FLASH_YELLOW : d.accent);
+  } else {
+    sparkles(ctx, marginPoints(rand, 10).map(([x, y]) => [x, y, 8 + rand() * 14] as [number, number, number]), gold);
+  }
+  ctx.restore();
+}
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -703,6 +1069,41 @@ function drawProduct(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAsset
       ctx.globalCompositeOperation = "multiply";
       ctx.drawImage(img, p.x, p.y, p.w, p.h);
     }
+  } else if (t.photo === "cutout" && ok) {
+    const cut = cutout(img);
+    if (cut.ok) {
+      // Product standing in the scene: bottom on the floor line, soft contact shadow, slight drop shadow.
+      const src = cut.canvas;
+      const r = Math.min(cell.w / src.width, (cell.h - 20) / src.height);
+      const w = src.width * r;
+      const h = src.height * r;
+      const x0 = cell.x + (cell.w - w) / 2;
+      const floor = cell.y + cell.h - 10;
+      const shadow = ctx.createRadialGradient(x0 + w / 2, floor, 0, x0 + w / 2, floor, w * 0.55);
+      shadow.addColorStop(0, "rgba(0,0,0,0.55)");
+      shadow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.save();
+      ctx.translate(x0 + w / 2, floor);
+      ctx.scale(1, 0.12);
+      ctx.translate(-(x0 + w / 2), -floor);
+      ctx.fillStyle = shadow;
+      ctx.fillRect(x0 - w * 0.1, floor - w * 0.6, w * 1.2, w * 1.2);
+      ctx.restore();
+      ctx.shadowColor = "rgba(0,0,0,0.4)";
+      ctx.shadowBlur = 30;
+      ctx.shadowOffsetY = 12;
+      ctx.drawImage(src, x0, floor - h, w, h);
+    } else {
+      // Not on a plain white background: present it on a white card instead.
+      roundRect(ctx, cell.x + 40, cell.y + 20, cell.w - 80, cell.h - 40, 32);
+      ctx.fillStyle = "#ffffff";
+      ctx.shadowColor = "rgba(0,0,0,0.4)";
+      ctx.shadowBlur = 40;
+      ctx.fill();
+      ctx.shadowColor = "transparent";
+      const p = fitImage(img, { x: cell.x + 64, y: cell.y + 44, w: cell.w - 128, h: cell.h - 88 });
+      ctx.drawImage(img, p.x, p.y, p.w, p.h);
+    }
   } else if (t.photo === "circle") {
     const cx = cell.x + cell.w / 2;
     const cy = cell.y + cell.h / 2;
@@ -970,6 +1371,8 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
   ctx.textBaseline = "alphabetic";
   ctx.direction = "ltr";
   t.background(ctx, d, assets);
+  const ev = eventById(d.event);
+  if (ev) drawEventDecor(ctx, d, ev.decor, ev.id);
   drawLogo(ctx, d, t, assets);
   drawTag(ctx, d, t, assets, ar ? d.tagAr : d.tag);
 
@@ -1000,8 +1403,13 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
     if (d.theme === "neon") {
       ctx.shadowColor = d.accent;
       ctx.shadowBlur = 28;
+    } else if (d.theme === "scene") {
+      // Soft shadow keeps white text readable on any photo.
+      ctx.shadowColor = "rgba(0,0,0,0.55)";
+      ctx.shadowBlur = 18;
     }
-    const lineH = t.titleKind === "display" ? 1.0 : 0.95;
+    // Serif capitals carry tall accents (É, È): give their lines more room.
+    const lineH = t.titleKind === "display" ? 1.0 : t.titleKind === "serif" ? 1.12 : 0.95;
     for (const line of tf.lines) {
       y += tf.size * lineH;
       const a = anchor(line);

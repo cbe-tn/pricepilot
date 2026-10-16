@@ -4,6 +4,7 @@ import { products } from "@/db/schema";
 import { getAuth } from "@/lib/auth";
 import { USER_AGENT } from "@/lib/extract";
 import { officialPhotoUrl } from "@/lib/marketing";
+import { SCENE_URL } from "@/lib/scenes";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,23 @@ function isPublicHttpUrl(raw: string): boolean {
 export async function GET(req: Request) {
   const auth = await getAuth();
   if (!auth) return new Response("Non autorisé", { status: 401 });
-  const id = new URL(req.url).searchParams.get("product") ?? "";
+  const params = new URL(req.url).searchParams;
+  const scene = params.get("scene");
+  if (scene) {
+    // Realistic background: only the CC0 StockSnap CDN is allowed.
+    if (!SCENE_URL.test(scene)) return new Response("Scène invalide", { status: 400 });
+    try {
+      const res = await fetch(scene, { headers: { "User-Agent": USER_AGENT, Accept: "image/jpeg,image/*" }, signal: AbortSignal.timeout(15_000) });
+      const type = res.headers.get("content-type") ?? "";
+      if (!res.ok || !type.startsWith("image/") || type.includes("svg")) return new Response("Scène indisponible", { status: 502 });
+      const body = await res.arrayBuffer();
+      if (body.byteLength > MAX_BYTES) return new Response("Scène trop lourde", { status: 502 });
+      return new Response(body, { headers: { "Content-Type": type, "Cache-Control": "private, max-age=604800" } });
+    } catch {
+      return new Response("Scène indisponible", { status: 502 });
+    }
+  }
+  const id = params.get("product") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response("Produit invalide", { status: 400 });
   const [product] = await db
     .select()

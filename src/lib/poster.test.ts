@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { checkPoster, defaultDesign, normalizeDesign, posterFileName, scoreProduct, type PosterProduct } from "./poster";
+import { applyEvent, checkPoster, defaultDesign, normalizeDesign, posterFileName, scoreProduct, type PosterProduct } from "./poster";
+import { defaultSceneQuery, eventById, upcomingEvents } from "./events";
 
 const now = new Date().toISOString();
 const product = (over: Partial<PosterProduct> = {}): PosterProduct => ({
@@ -108,5 +109,49 @@ const product = (over: Partial<PosterProduct> = {}): PosterProduct => ({
 }
 
 assert.equal(posterFileName("Pack Rentrée 2026 !"), "pack-rentree-2026-1080x1080.png");
+
+// Tunisian calendar.
+{
+  const from = new Date(Date.UTC(2026, 9, 16));
+  const at = (id: string) => eventById(id)!.next(from)!.date.toISOString().slice(0, 10);
+  assert.equal(at("black-friday"), "2026-11-27", "day after the 4th Thursday of November");
+  assert.equal(at("nouvel-an"), "2027-01-01");
+  assert.equal(at("fete-meres"), "2027-05-30", "last Sunday of May (Tunisia)");
+  assert.equal(at("fete-femme"), "2027-08-13");
+  assert.equal(eventById("ramadan")!.next(from)!.approx, true, "lunar dates are estimates");
+  assert.equal(upcomingEvents(from)[0].event.id, "black-friday", "nearest event first");
+  assert.equal(defaultSceneQuery([{ name: "Micro-ondes Brandt 20L", category: "Petit electromenager" }]), "kitchen");
+  assert.equal(defaultSceneQuery([{ name: "Imprimante HP Smart Tank 670", category: null }]), "office desk");
+}
+
+// Event applied: headline, tag and end date from the calendar; product name kept as subtitle.
+{
+  const p = product();
+  const d = applyEvent(defaultDesign([p], { brand: "numedia", lang: "fr" }), "nouvel-an", [p], new Date(Date.UTC(2026, 9, 16)));
+  assert.equal(d.title, "BONNE ANNÉE 2027");
+  assert.equal(d.titleAr, "بونانة 2027");
+  assert.equal(d.subtitle, p.name);
+  assert.equal(d.validUntil, "2027-01-01");
+  assert.equal(applyEvent(d, "", [p]).title, "FER À VAPEUR", "removing the event restores the product headline");
+  const sales = applyEvent(d, "soldes-ete", [p], new Date(Date.UTC(2026, 9, 16)));
+  assert.equal(sales.validUntil, "2027-09-18", "summer sales run six weeks from 7 August");
+}
+
+// Soldes: at least 20 % off a verified crossed-out price.
+{
+  const p = product({ ownPrice: 100, costTtc: 50 });
+  const d = { ...applyEvent(defaultDesign([p], { brand: "numedia", lang: "fr" }), "soldes-ete", [p]), promoPrice: 85 };
+  assert.ok(checkPoster(d, [p]).errors.some((e) => e.includes("20 %")), "15 % is below the legal minimum");
+  assert.ok(!checkPoster({ ...d, promoPrice: 80 }, [p]).errors.some((e) => e.includes("Soldes")), "20 % is accepted");
+  const unverified = product({ ownStatus: "review", ownPrice: 100, costTtc: 50 });
+  assert.ok(checkPoster({ ...d, promoPrice: 70 }, [unverified]).errors.some((e) => e.includes("prix barré vérifié")));
+}
+
+// Realistic scene style needs a photo.
+{
+  const p = product();
+  const d = { ...defaultDesign([p], { brand: "numedia", lang: "fr" }), theme: "scene" as const };
+  assert.ok(checkPoster(d, [p]).errors.some((e) => e.includes("scène")));
+}
 
 console.log("poster tests passed");

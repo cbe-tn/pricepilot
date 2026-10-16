@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, Download, RotateCcw, Save, ShieldCheck, Shuffle } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Download, Image as ImageIcon, RotateCcw, Save, Search, ShieldCheck, Shuffle } from "lucide-react";
 import { Badge, Button, Card, Field, Input, Select } from "@/components/ui";
 import { drawPoster, type Box, type PosterAssets } from "@/components/marketing/render";
 import { refreshPhotoAction, saveCampaignAction, validateCampaignAction } from "@/lib/marketing-actions";
@@ -10,6 +10,7 @@ import {
   BRAND_COLORS,
   checkPoster,
   fmt,
+  applyEvent,
   normalizeDesign,
   POSTER_SIZE,
   posterFileName,
@@ -19,6 +20,7 @@ import {
   type PosterProduct,
 } from "@/lib/poster";
 import { formatWhen, relativeTime } from "@/lib/money";
+import { defaultSceneQuery, eventById, SCENE_CHIPS, upcomingEvents } from "@/lib/events";
 
 type Version = { at: string; design: PosterDesign };
 
@@ -73,6 +75,8 @@ export function PosterEditor({
     setServerMsg(null);
   }, []);
 
+  const sceneUrl = design.scene?.url ?? null;
+
   // Fonts and images must be ready before painting, or the canvas would fall back to system fonts.
   useEffect(() => {
     let cancelled = false;
@@ -81,16 +85,17 @@ export function PosterEditor({
         [fonts.latin, fonts.arabic, fonts.display, fonts.serif].flatMap((f) => [500, 600, 800, 900].map((w) => document.fonts.load(`${w} 40px ${f}`, "Aa عربي 0123").catch(() => []))),
       );
       const logoSrc = design.brand === "cbe" ? "/brand/logo-full.png" : "/brand/numedia-logo.webp";
-      const [logo, ...photos] = await Promise.all([
+      const [logo, scene, ...photos] = await Promise.all([
         loadImage(logoSrc),
+        sceneUrl ? loadImage(`/api/marketing/image?scene=${encodeURIComponent(sceneUrl)}`) : Promise.resolve(null),
         ...products.map((p) => (p.hasPhoto ? loadImage(`/api/marketing/image?product=${p.id}&v=${photoVersion}`) : Promise.resolve(null))),
       ]);
-      if (!cancelled) setAssets({ fonts, logo, photos: new Map(products.map((p, i) => [p.id, photos[i]])) });
+      if (!cancelled) setAssets({ fonts, logo, scene, photos: new Map(products.map((p, i) => [p.id, photos[i]])) });
     })();
     return () => {
       cancelled = true;
     };
-  }, [design.brand, fonts, products, photoVersion]);
+  }, [design.brand, sceneUrl, fonts, products, photoVersion]);
 
   useEffect(() => {
     const ctx = canvasRef.current?.getContext("2d");
@@ -311,6 +316,18 @@ export function PosterEditor({
             </Button>
           </div>
           <StyleGallery design={design} products={products} pricing={check.pricing} assets={assets} onPick={(theme) => update({ theme })} />
+        </Card>
+
+        <Card>
+          <EventPicker value={design.event} onChange={(id) => update(applyEvent(design, id, products))} />
+        </Card>
+
+        <Card>
+          <ScenePicker
+            scene={design.scene}
+            initialQuery={eventById(design.event)?.scene ?? defaultSceneQuery(products)}
+            onPick={(scene) => update({ scene, theme: "scene" })}
+          />
         </Card>
 
         <Card>
@@ -564,6 +581,121 @@ function StyleGallery({
           <span className="block px-2 py-1 text-[11px] font-medium">{t.label}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/** Tunisian commercial events, nearest first; choosing one fills the headline, tag and end date. */
+function EventPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const [events] = useState(() => upcomingEvents());
+  const current = eventById(value);
+  return (
+    <div>
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+        <CalendarDays size={16} /> Événement commercial
+      </h2>
+      <p className="mb-2 text-xs text-[#6b858c]">Remplit le titre, l’étiquette et la date de fin (modifiables ensuite) et ajoute un décor de saison.</p>
+      <Select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Aucun événement</option>
+        {events.map(({ event, date, approx, inDays }) => (
+          <option key={event.id} value={event.id}>
+            {event.label}
+            {date ? ` — ${approx ? "≈ " : ""}${date.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}` : " — date à saisir"}
+            {inDays != null ? ` (dans ${inDays} j)` : ""}
+          </option>
+        ))}
+      </Select>
+      {current?.note ? <p className="mt-2 text-xs text-[#8a6100]">⚠ {current.note}</p> : null}
+      {current?.sales ? <p className="mt-1 text-xs text-[#8a6100]">Soldes : remise d’au moins 20 % sur le prix numedia.tn exigée avant l’export.</p> : null}
+    </div>
+  );
+}
+
+type SceneResult = { url: string; thumb: string; title: string; creator: string; landing: string };
+
+/** Realistic backgrounds (CC0 photos); picking one switches the poster to the "Scène réaliste" style. */
+function ScenePicker({ scene, initialQuery, onPick }: { scene: SceneResult | null; initialQuery: string; onPick: (s: SceneResult) => void }) {
+  const [q, setQ] = useState(initialQuery);
+  const [results, setResults] = useState<SceneResult[]>([]);
+  const [state, setState] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
+
+  const search = useCallback(async (query: string) => {
+    if (!query.trim()) return;
+    setState({ loading: true, error: null });
+    try {
+      const res = await fetch(`/api/marketing/scenes?q=${encodeURIComponent(query)}`);
+      const data = (await res.json()) as { scenes: SceneResult[]; error?: string };
+      setResults(data.scenes);
+      setState({ loading: false, error: data.error ?? (data.scenes.length ? null : "Aucune photo pour cette recherche — essayez un mot en anglais (kitchen, beach…).") });
+    } catch {
+      setState({ loading: false, error: "Recherche impossible pour le moment." });
+    }
+  }, []);
+
+  useEffect(() => {
+    // First suggestions for the products (kitchen for appliances, office for printers…).
+    const t = setTimeout(() => void search(initialQuery), 0);
+    return () => clearTimeout(t);
+  }, [initialQuery, search]);
+
+  return (
+    <div>
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+        <ImageIcon size={16} /> Scène réaliste
+      </h2>
+      <p className="mb-2 text-xs text-[#6b858c]">
+        Le produit est détouré automatiquement et posé dans une vraie photo (libre de droits CC0, usage commercial autorisé). Choisir une photo active le style « Scène réaliste ».
+      </p>
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        {SCENE_CHIPS.map((c) => (
+          <button
+            key={c.q}
+            type="button"
+            onClick={() => {
+              setQ(c.q);
+              void search(c.q);
+            }}
+            className={`rounded-full border px-2.5 py-1 text-xs ${q === c.q ? "border-[#0b4a56] bg-[#0b4a56] text-white" : "border-[#d7e3e6] bg-white text-[#0b4a56] hover:border-[#0b4a56]"}`}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <form
+        className="mb-3 flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void search(q);
+        }}
+      >
+        <Input className="h-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Recherche en anglais : kitchen, beach, forest…" />
+        <Button size="sm" type="submit" variant="secondary" disabled={state.loading}>
+          <Search size={14} /> {state.loading ? "…" : "Chercher"}
+        </Button>
+      </form>
+      {state.error ? <p className="mb-2 text-xs text-[#8a6100]">{state.error}</p> : null}
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+        {results.map((s) => (
+          <button
+            key={s.url}
+            type="button"
+            onClick={() => onPick(s)}
+            title={`${s.title} — ${s.creator}`}
+            className={`overflow-hidden rounded-lg border-2 ${scene?.url === s.url ? "border-[#0b8fa3] ring-2 ring-[#0b8fa3]/30" : "border-transparent hover:border-[#0b4a56]"}`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={s.thumb} alt={s.title} loading="lazy" className="block aspect-square w-full object-cover" />
+          </button>
+        ))}
+      </div>
+      {scene ? (
+        <p className="mt-2 text-[11px] text-[#6b858c]">
+          Photo : « {scene.title} » par {scene.creator || "auteur inconnu"} —{" "}
+          <a href={scene.landing} target="_blank" rel="noreferrer" className="underline">
+            StockSnap (CC0)
+          </a>
+        </p>
+      ) : null}
     </div>
   );
 }

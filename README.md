@@ -48,6 +48,16 @@ Promo posters (PNG **1080 × 1080**) from real catalogue products, in French, Ar
   `/api/marketing/image` (same origin, so the canvas stays exportable) and cached in `products.image_url`.
   Logos: `public/brand/numedia-logo.webp` (from numedia.tn) and `public/brand/logo-full.png` (CBE) —
   replace them with HD files to improve the badge.
+- **Tunisian events** (`src/lib/events.ts`): Black Friday, Nouvel An, soldes d'hiver / d'été, Saint-Valentin,
+  Ramadan, Aïd el-Fitr, Aïd el-Kébir, Mouled, fête des Mères (last Sunday of May), fête des Pères, national
+  days (20 mars, 1er mai, 25 juillet, 13 août), rentrée. Choosing one fills the headline (French + Tunisian
+  Arabic), tag and offer end date and adds a seasonal decoration. Lunar dates are estimates (« à confirmer »).
+  **Soldes**: export is blocked unless the poster shows a verified crossed-out price and at least 20 % off
+  (loi n° 40 de 1998).
+- **Scène réaliste**: CC0 photos (StockSnap, searched through the Openverse API — no key, 200 searches
+  per day, cached) as background; the product is cut out automatically (edge-aware removal of the white
+  studio background) and placed with a contact shadow. Suggested scene from the product category
+  (kitchen for appliances, office for printers…). Only `cdn.stocksnap.io` images are accepted.
 - No paid AI is used yet: layout and texts are deterministic templates. AI copywriting or generated
   backgrounds can be added later behind a server-side API key; prices are never sent to or drawn by a model.
 - Table `marketing_campaigns` (created by hand on Supabase, like other recent columns):

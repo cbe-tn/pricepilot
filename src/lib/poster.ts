@@ -2,13 +2,15 @@
 // Commercial values never come from free text: prices are read from the catalogue facts below, and the
 // only number the user types is the promo price, which is checked against the 3 % margin floor.
 
+import { eventById, isoDay } from "./events";
+
 export const POSTER_SIZE = 1080;
 export const MAX_POSTER_PRODUCTS = 4;
 /** A numedia.tn price older than this is flagged before it is printed as the crossed-out price. */
 export const OWN_PRICE_MAX_AGE_DAYS = 3;
 
 export type PosterLang = "fr" | "ar" | "bi";
-export type PosterTheme = "studio" | "promo" | "premium" | "podium" | "neon" | "split" | "flash" | "minimal" | "aurora";
+export type PosterTheme = "studio" | "promo" | "premium" | "podium" | "neon" | "split" | "flash" | "minimal" | "aurora" | "scene";
 export type PosterBrand = "numedia" | "cbe";
 export type PosterElement = "title" | "products" | "price" | "benefits";
 
@@ -62,7 +64,13 @@ export type PosterDesign = {
   showDiscount: boolean;
   productOrder: string[];
   layout: Record<PosterElement, ElementLayout>;
+  /** Tunisian commercial event (id from TN_EVENTS) or "" for none: decoration and legal checks. */
+  event: string;
+  /** Realistic background photo (CC0, StockSnap via Openverse) for the "Scène réaliste" style. */
+  scene: PosterScene | null;
 };
+
+export type PosterScene = { url: string; thumb: string; title: string; creator: string; landing: string };
 
 export const BRAND_COLORS = [
   { value: "#e30613", label: "Rouge NUMEDIA" },
@@ -82,6 +90,7 @@ export const THEMES: Array<{ value: PosterTheme; label: string }> = [
   { value: "flash", label: "Vente flash" },
   { value: "minimal", label: "Éditorial" },
   { value: "aurora", label: "Aurora" },
+  { value: "scene", label: "Scène réaliste" },
 ];
 
 const DEFAULT_LAYOUT: Record<PosterElement, ElementLayout> = {
@@ -127,6 +136,8 @@ export function defaultDesign(products: PosterProduct[], opts: { brand: PosterBr
     showDiscount: false,
     productOrder: products.map((p) => p.id),
     layout: structuredClone(DEFAULT_LAYOUT),
+    event: "",
+    scene: null,
   };
 }
 
@@ -208,6 +219,19 @@ export function checkPoster(design: PosterDesign, products: PosterProduct[]): Po
     else if (oldReference > price) oldPrice = oldReference;
   }
   const discountPct = design.showDiscount && oldPrice != null && price != null ? Math.round((1 - price / oldPrice) * 100) : null;
+
+  const ev = eventById(design.event);
+  if (ev?.note) warnings.push(`${ev.label} : ${ev.note}`);
+  // Official sales (soldes): at least 20 % off a verified previous price (loi n° 40 de 1998).
+  if (ev?.sales && price != null) {
+    if (oldPrice == null) errors.push("Soldes : il faut afficher un prix barré vérifié (prix numedia.tn confirmé, supérieur au prix soldé).");
+    else {
+      // Rounded to 0.01 % so an exact 20 % is not rejected by floating-point error (19.999…).
+      const real = Math.round((1 - price / oldPrice) * 10_000) / 100;
+      if (real < 20) errors.push(`Soldes : la remise minimale légale est de 20 % (ici ${real.toLocaleString("fr-FR")} %).`);
+    }
+  }
+  if (design.theme === "scene" && !design.scene) errors.push("Choisissez une photo de scène pour le style « Scène réaliste ».");
 
   if (!(design.lang === "ar" ? design.titleAr : design.title).trim()) errors.push("Le titre de l'affiche est vide.");
   if (design.validUntil && new Date(design.validUntil).getTime() < new Date(new Date().toDateString()).getTime()) {
@@ -299,4 +323,33 @@ export function posterFileName(name: string): string {
     .replace(/^-|-$/g, "")
     .slice(0, 60);
   return `${slug || "affiche"}-1080x1080.png`;
+}
+
+/**
+ * Applies a Tunisian event: headline, tag and offer end date from the calendar (all editable after),
+ * the product name moves to the subtitle. "" removes the event and restores the product headline.
+ */
+export function applyEvent(design: PosterDesign, eventId: string, products: PosterProduct[], from = new Date()): PosterDesign {
+  const base = defaultDesign(products, { brand: design.brand, lang: design.lang });
+  const ev = eventById(eventId);
+  if (!ev) return { ...design, event: "", title: base.title, titleAr: base.titleAr, subtitle: base.subtitle, tag: base.tag, tagAr: base.tagAr };
+  const next = ev.next(from);
+  const year = String((next?.date ?? from).getUTCFullYear());
+  const fill = (s: string) => s.replace("{Y}", year);
+  const single = products.length === 1;
+  return {
+    ...design,
+    event: ev.id,
+    title: fill(ev.fr.title),
+    titleAr: fill(ev.ar.title),
+    subtitle: single ? (products[0]?.name ?? base.subtitle) : base.subtitle,
+    tag: ev.fr.tag,
+    tagAr: ev.ar.tag,
+    cta: ev.fr.cta ?? design.cta,
+    ctaAr: ev.ar.cta ?? design.ctaAr,
+    validUntil: next ? isoDay(new Date(next.date.getTime() + (ev.days ?? 0) * 86_400_000)) : design.validUntil,
+    theme: ev.theme ?? design.theme,
+    showOldPrice: ev.sales ? true : design.showOldPrice,
+    showDiscount: ev.sales ? true : design.showDiscount,
+  };
 }

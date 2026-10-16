@@ -8,7 +8,9 @@ import { db } from "@/db";
 import { marketingCampaigns, products } from "@/db/schema";
 import { getAuth, writeAudit } from "@/lib/auth";
 import { loadPosterProducts, officialPhotoUrl } from "@/lib/marketing";
-import { BRAND_COLORS, checkPoster, defaultDesign, MAX_POSTER_PRODUCTS, normalizeDesign, THEMES, type PosterCheck, type PosterDesign, type PosterProduct } from "@/lib/poster";
+import { TN_EVENTS } from "@/lib/events";
+import { SCENE_URL } from "@/lib/scenes";
+import { applyEvent, BRAND_COLORS, checkPoster, defaultDesign, MAX_POSTER_PRODUCTS, normalizeDesign, THEMES, type PosterCheck, type PosterDesign, type PosterProduct } from "@/lib/poster";
 
 const MAX_VERSIONS = 15;
 
@@ -42,6 +44,17 @@ const designSchema = z.object({
   showDiscount: z.boolean(),
   productOrder: z.array(z.string().uuid()).max(MAX_POSTER_PRODUCTS),
   layout: z.object({ title: layout, products: layout, price: layout, benefits: layout }),
+  event: z.union([z.literal(""), z.enum(TN_EVENTS.map((e) => e.id) as [string, ...string[]])]),
+  // Scene photos come only from the CC0 StockSnap CDN (served through our image proxy).
+  scene: z
+    .object({
+      url: z.string().regex(SCENE_URL),
+      thumb: z.string().regex(SCENE_URL),
+      title: text(200),
+      creator: text(200),
+      landing: z.string().url().max(500),
+    })
+    .nullable(),
 });
 
 async function ownCampaign(workspaceId: string, id: string) {
@@ -67,7 +80,9 @@ export async function createCampaignAction(formData: FormData) {
   const valid = ids.filter((id) => owned.some((o) => o.id === id));
   if (!valid.length) return;
   const facts = await loadPosterProducts(auth.workspace.id, valid);
-  const design = defaultDesign(facts, { brand, lang, website: auth.workspace.website, phone: auth.workspace.phone });
+  const base = defaultDesign(facts, { brand, lang, website: auth.workspace.website, phone: auth.workspace.phone });
+  const event = String(formData.get("event") ?? "");
+  const design = TN_EVENTS.some((e) => e.id === event) ? applyEvent(base, event, facts) : base;
   const [created] = await db
     .insert(marketingCampaigns)
     .values({ workspaceId: auth.workspace.id, createdBy: auth.user.id, name, productIds: valid, design })

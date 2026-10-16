@@ -6,6 +6,7 @@ import { Badge, Button, Card, Field, Input, Select } from "@/components/ui";
 import { createCampaignAction } from "@/lib/marketing-actions";
 import { DEFAULT_WEIGHTS, fmt, MAX_POSTER_PRODUCTS, scoreProduct, type PosterProduct, type ScoreWeights } from "@/lib/poster";
 import { relativeTime } from "@/lib/money";
+import { upcomingEvents } from "@/lib/events";
 
 const WEIGHTS_KEY = "pp-marketing-weights";
 const PAGE = 60;
@@ -53,6 +54,7 @@ export function ProductPicker({ products }: { products: PosterProduct[] }) {
   const [readyOnly, setReadyOnly] = useState(true);
   const [limit, setLimit] = useState(PAGE);
   const [selected, setSelected] = useState<string[]>([]);
+  const [events] = useState(() => upcomingEvents());
 
   const setWeight = (k: keyof ScoreWeights, v: number) => {
     const next = { ...weights, [k]: v };
@@ -272,6 +274,17 @@ export function ProductPicker({ products }: { products: PosterProduct[] }) {
                 <option value="fr">Français</option>
                 <option value="ar">Arabe</option>
                 <option value="bi">Bilingue français + arabe</option>
+              </Select>
+            </Field>
+            <Field label="Événement (facultatif)">
+              <Select name="event" defaultValue="">
+                <option value="">Aucun</option>
+                {events.map(({ event, date, approx }) => (
+                  <option key={event.id} value={event.id}>
+                    {event.label}
+                    {date ? ` — ${approx ? "≈ " : ""}${date.toLocaleDateString("fr-FR", { day: "numeric", month: "short", timeZone: "UTC" })}` : ""}
+                  </option>
+                ))}
               </Select>
             </Field>
             <CreateButton disabled={!selected.length} />

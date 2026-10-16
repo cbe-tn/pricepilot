@@ -625,7 +625,7 @@ export async function reviewMatchAction(formData: FormData) {
   if (decision === "confirm") {
     await db
       .update(competitorOffers)
-      .set({ matchClass: "exact", matchConfidence: 100, matchReason: "Confirmée par l'utilisateur", excludedFromBenchmark: false, userReview: "confirm", productId })
+      .set({ matchClass: "exact", matchConfidence: 100, matchReason: "Confirmée par l'utilisateur", excludedFromBenchmark: false, isCompatible: false, userReview: "confirm", productId })
       .where(and(eq(competitorOffers.id, offerId), eq(competitorOffers.workspaceId, auth.workspace.id)));
   } else if (decision === "reject") {
     await db
@@ -635,7 +635,7 @@ export async function reviewMatchAction(formData: FormData) {
   } else if (decision === "link") {
     await db
       .update(competitorOffers)
-      .set({ productId, userReview: "link", matchClass: "exact", matchConfidence: 100, excludedFromBenchmark: false, matchReason: "Liée manuellement" })
+      .set({ productId, userReview: "link", matchClass: "exact", matchConfidence: 100, excludedFromBenchmark: false, isCompatible: false, matchReason: "Liée manuellement" })
       .where(and(eq(competitorOffers.id, offerId), eq(competitorOffers.workspaceId, auth.workspace.id)));
   }
   revalidatePath("/benchmarking");

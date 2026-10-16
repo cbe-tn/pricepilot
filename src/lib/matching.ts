@@ -201,3 +201,10 @@ export function isBenchmarkable(match: Pick<MatchResult, "matchClass" | "exclude
   if (match.excluded) return false;
   return match.matchClass === "exact" || match.matchClass === "strong";
 }
+
+// Compatible ("adaptable") versions of a reference are a different product from the original.
+const COMPATIBLE_RE = /\b(adaptables?|compatibles?|g[ée]n[ée]riques?|remanufactur[ée]e?s?|reconditionn[ée]e?s?)(?![a-z])/i;
+/** A compatible listing ("Toner adaptable Kyocera TK-170") for an original product (and not when we sell a compatible too). */
+export function isCompatibleListing(listingTitle: string, productName: string): boolean {
+  return COMPATIBLE_RE.test(listingTitle) && !COMPATIBLE_RE.test(productName);
+}

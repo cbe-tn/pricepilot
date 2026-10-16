@@ -162,7 +162,7 @@ export function BenchmarkTable({
   ownShop: Competitor | null;
   showOwn?: boolean;
 }) {
-  const colSpan = 6 + (showOwn ? 1 : 0) + comps.length + 1;
+  const colSpan = 6 + (showOwn ? 1 : 0) + comps.length + 2; // + Compatibles
   return (
     <table className="pp-table pp-compact pp-sticky-col">
       <thead>
@@ -183,12 +183,22 @@ export function BenchmarkTable({
           <th className="text-right" title="1 DT sous le concurrent le moins cher en stock, sans passer sous la marge minimale">
             Prix conseillé
           </th>
-          {comps.map((c) => (
-            <th key={c.id} className="max-w-[92px] text-right" title={`${c.name} — ${compCount.get(c.id) ?? 0} produits trouvés`}>
-              <div className="truncate">{c.name}</div>
-              <div className="text-[9px] font-normal normal-case text-[#8aa1a7]">{compCount.get(c.id) ?? 0} prod.</div>
-            </th>
-          ))}
+          {comps.map((c) => {
+            const blocked = isBlocked(c);
+            return (
+              <th key={c.id} className="max-w-[92px] text-right" title={blocked ? c.lastError ?? "" : `${c.name} — ${compCount.get(c.id) ?? 0} produits trouvés`}>
+                <div className="truncate">{c.name}</div>
+                {blocked ? (
+                  <div className="text-[9px] font-semibold normal-case text-[#b42323]">accès bloqué</div>
+                ) : (
+                  <div className="text-[9px] font-normal normal-case text-[#8aa1a7]">{compCount.get(c.id) ?? 0} prod.</div>
+                )}
+              </th>
+            );
+          })}
+          <th className="text-right" title="Versions compatibles (adaptables) chez les concurrents — affichées à part, jamais utilisées pour le prix conseillé ni l'écart">
+            Compatibles
+          </th>
           <th className="text-right" title="Notre prix moins le concurrent le moins cher">
             Écart
           </th>
@@ -236,7 +246,7 @@ export function BenchmarkTable({
                     const cell = r.cells[c.id];
                     if (!cell)
                       return (
-                        <td key={c.id} className="pp-none text-center" title={`${c.name} : produit non trouvé`}>
+                        <td key={c.id} className="pp-none text-center" title={isBlocked(c) ? `${c.name} : accès bloqué par le site (protection anti-robot)` : `${c.name} : produit non trouvé`}>
                           ·
                         </td>
                       );
@@ -264,6 +274,9 @@ export function BenchmarkTable({
                       </td>
                     );
                   })}
+                  <td className="whitespace-nowrap text-right tabular-nums">
+                    <Compatibles r={r} />
+                  </td>
                   <td className="whitespace-nowrap text-right tabular-nums">{r.gapToCheapest != null ? signedTnd(r.gapToCheapest).replace(" DT", "") : "—"}</td>
                   <td className="text-right tabular-nums">{count}</td>
                 </>
@@ -286,3 +299,27 @@ export const benchmarkLegend = (
     l’article chez le concurrent
   </>
 );
+
+const isBlocked = (c: Competitor) => Boolean(c.lastError?.startsWith("Accès bloqué"));
+
+/** Cheapest compatible ("adaptable") version, marked as such; the others are listed in the tooltip. */
+function Compatibles({ r }: { r: BenchmarkRow }) {
+  const first = r.compatibles[0];
+  if (!first) return <span className="text-[#c3d0d3]">—</span>;
+  const all = r.compatibles.map((c) => `${c.competitorName} : ${formatTnd(c.priceTnd)} — ${c.title}`).join("\n");
+  return (
+    <div title={`Compatibles (pas l'original) :\n${all}`}>
+      {first.url ? (
+        <a href={first.url} target="_blank" rel="noreferrer" className="text-[#6b5a00] hover:underline">
+          {priceText(first.priceTnd)}
+        </a>
+      ) : (
+        <span className="text-[#6b5a00]">{priceText(first.priceTnd)}</span>
+      )}
+      <div className="text-[10px] text-[#8a6100]">
+        compatible · {first.competitorName}
+        {r.compatibles.length > 1 ? ` +${r.compatibles.length - 1}` : ""}
+      </div>
+    </div>
+  );
+}

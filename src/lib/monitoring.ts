@@ -149,7 +149,8 @@ export async function runMonitoringJob(auth: AuthContext, opts?: { competitorId?
         nextAvailability = live.offer.availability === "unknown" ? offer.availability : live.offer.availability;
         liveSeller = live.offer.seller ?? null;
         liveChecked += 1;
-        if (offer.userReview === AUTO_NO_OTHER_SELLER) {
+        // Compatible offers stay excluded from comparisons whatever happens to them.
+        if (offer.userReview === AUTO_NO_OTHER_SELLER && !offer.isCompatible) {
           await db.update(competitorOffers).set({ excludedFromBenchmark: false, userReview: null }).where(eq(competitorOffers.id, offer.id));
         }
       } else if (offer.isDemo && Math.abs(Math.sin(Date.now() / 8.64e7 + offer.title.length)) > 0.72) {

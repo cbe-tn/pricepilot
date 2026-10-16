@@ -6,7 +6,7 @@ import { and, count, eq, ilike, inArray, max, or, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { competitorCatalog, competitorOffers, competitors, priceObservations, products, workspaces, type Competitor, type Product } from "@/db/schema";
 import { USER_AGENT, compactText, fetchLiveOffer, fetchWithTimeout, isAllowedByRobots, politeDelay, type Availability } from "@/lib/extract";
-import { matchListing, type MatchClass } from "@/lib/matching";
+import { isCompatibleListing, matchListing, type MatchClass } from "@/lib/matching";
 import { moneyStr, n } from "@/lib/money";
 import type { AuthContext } from "@/lib/auth";
 
@@ -370,7 +370,37 @@ export type ReferenceCandidate = {
   /** Comparator pages: the shop offering priceTnd. */
   seller?: string | null;
   error?: string;
+  /** Compatible ("adaptable") version of the reference, not the original product. */
+  compatible?: boolean;
+  /** The site refused the request (anti-robot protection, HTTP 403/429). */
+  blocked?: boolean;
 };
+
+
+export const BLOCKED_PREFIX = "Accès bloqué";
+
+/**
+ * Remembers which competitors refuse our requests (anti-robot protection), so the benchmark can say
+ * "accès bloqué" instead of looking empty; cleared as soon as a page from that site is read again.
+ */
+async function recordAccess(sources: Competitor[], verified: ReferenceCandidate[][]) {
+  for (const [i, s] of sources.entries()) {
+    const group = verified[i] ?? [];
+    if (!group.length) continue;
+    const ok = group.some((c) => !c.error);
+    const blocked = !ok && group.every((c) => c.blocked);
+    const wasBlocked = s.lastError?.startsWith(BLOCKED_PREFIX) ?? false;
+    if (blocked && !wasBlocked) {
+      await db
+        .update(competitors)
+        .set({ lastError: `${BLOCKED_PREFIX} : le site refuse les visites automatiques depuis notre serveur (protection anti-robot, HTTP 403).` })
+        .where(eq(competitors.id, s.id));
+    } else if (ok && wasBlocked) {
+      await db.update(competitors).set({ lastError: null }).where(eq(competitors.id, s.id));
+    }
+  }
+}
+
 
 export type ReferenceSearchResult = {
   reference: string;
@@ -436,7 +466,7 @@ export async function findByReference(
           alreadyTracked: tracked.has(hit.url),
         };
         if (!live.ok) {
-          out.push({ ...base, title: hit.slugTitle, imageUrl: hit.imageUrl, priceTnd: null, availability: "unknown", referenceOnPage: false, matchClass: null, confidence: 0, reason: live.error, error: live.error });
+          out.push({ ...base, title: hit.slugTitle, imageUrl: hit.imageUrl, priceTnd: null, availability: "unknown", referenceOnPage: false, matchClass: null, confidence: 0, reason: live.error, error: live.error, blocked: live.classification === "blocked" });
           continue;
         }
         const title = live.offer.title ?? hit.slugTitle;
@@ -475,11 +505,15 @@ export async function findByReference(
             reason = m.exclusionReason ?? m.reason;
           }
         }
-        out.push({ ...base, title, imageUrl: live.offer.imageUrl ?? hit.imageUrl, priceTnd: live.offer.priceTnd, availability: live.offer.availability, referenceOnPage: refOnPage, matchClass, confidence, reason, seller: live.offer.seller ?? null });
+        const compatible = isCompatibleListing(title, product?.name ?? reference);
+        if (compatible) reason = `Produit compatible (adaptable), pas l'original. ${reason}`;
+        out.push({ ...base, title, imageUrl: live.offer.imageUrl ?? hit.imageUrl, priceTnd: live.offer.priceTnd, availability: live.offer.availability, referenceOnPage: refOnPage, matchClass, confidence, reason, seller: live.offer.seller ?? null, compatible });
       }
       return out;
     }),
   );
+
+  await recordAccess(sources, verified);
 
   const candidates = verified
     .flat()
@@ -548,10 +582,13 @@ export async function autoMatchProduct(
   // by monitoring). A page the user rejected is never proposed again for this product, but the
   // competitor is still searched in case it lists the right article later.
   const existing = await db
-    .select({ competitorId: competitorOffers.competitorId, url: competitorOffers.url, userReview: competitorOffers.userReview })
+    .select({ competitorId: competitorOffers.competitorId, url: competitorOffers.url, userReview: competitorOffers.userReview, isCompatible: competitorOffers.isCompatible })
     .from(competitorOffers)
     .where(eq(competitorOffers.productId, product.id));
-  const covered = new Set(existing.filter((o) => o.userReview !== "reject").map((o) => o.competitorId));
+  // A compatible offer does not cover a competitor: the original is still searched there.
+  const covered = new Set(existing.filter((o) => o.userReview !== "reject" && !o.isCompatible).map((o) => o.competitorId));
+  const compatibleFrom = new Set(existing.filter((o) => o.isCompatible).map((o) => o.competitorId));
+  const compatibles = new Map<string, ReferenceCandidate>();
   const rejectedUrls = new Set(existing.filter((o) => o.userReview === "reject" && o.url).map((o) => o.url!));
   const enabled = await db
     .select({ id: competitors.id })
@@ -565,6 +602,13 @@ export async function autoMatchProduct(
     competitorCount = res.catalogs.length;
     for (const c of res.candidates) {
       if (c.priceTnd == null || rejectedUrls.has(c.url)) continue;
+      if (c.compatible) {
+        // Compatible version of the reference: kept apart (cheapest per competitor), never as the original.
+        const prev = compatibles.get(c.competitorId);
+        const sane = !(costTtc > 0) || c.priceTnd <= costTtc * 3;
+        if (c.referenceOnPage && sane && !compatibleFrom.has(c.competitorId) && !c.alreadyTracked && (!prev || c.priceTnd < prev.priceTnd!)) compatibles.set(c.competitorId, c);
+        continue;
+      }
       const confident = c.referenceOnPage && (c.matchClass === "exact" || c.matchClass === "strong") && plausiblePrice(c.priceTnd);
       if (c.alreadyTracked) {
         best.set(c.competitorId, c);
@@ -612,6 +656,42 @@ export async function autoMatchProduct(
       isDemo: false,
     });
     outcome.tracked.push({ competitorName: c.competitorName, url: c.url, priceTnd: c.priceTnd! });
+  }
+  // Compatibles: shown in their own column, excluded from every price comparison and recommendation.
+  for (const c of compatibles.values()) {
+    const [offer] = await db
+      .insert(competitorOffers)
+      .values({
+        workspaceId: auth.workspace.id,
+        productId: product.id,
+        competitorId: c.competitorId,
+        title: c.title,
+        brand: product.brand,
+        model: product.model,
+        manufacturerRef: product.manufacturerRef,
+        url: c.url,
+        imageUrl: c.imageUrl,
+        priceTnd: moneyStr(c.priceTnd!),
+        sellerName: c.seller ?? null,
+        availability: c.availability,
+        matchClass: "possible",
+        matchConfidence: Math.min(c.confidence, 60),
+        matchReason: `Compatible détecté automatiquement : ${c.reason}`,
+        excludedFromBenchmark: true,
+        isCompatible: true,
+        isDemo: false,
+      })
+      .returning();
+    await db.insert(priceObservations).values({
+      workspaceId: auth.workspace.id,
+      offerId: offer.id,
+      productId: product.id,
+      competitorId: c.competitorId,
+      priceTnd: moneyStr(c.priceTnd!),
+      availability: c.availability,
+      eventType: "unchanged",
+      isDemo: false,
+    });
   }
   outcome.review = [...reviewByUrl.values()].filter((c) => !best.has(c.competitorId));
   return outcome;

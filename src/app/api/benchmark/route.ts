@@ -45,6 +45,10 @@ export async function GET(req: Request) {
       line["Écart vs moins cher"] = r.gapToCheapest ?? "";
       line["Prix conseillé TTC"] = r.recommendation?.priceTnd ?? "";
       line["Marge conseillée %"] = pct(r.recommendation?.marginPct ?? null);
+      // Compatible ("adaptable") versions: informative only, never in the comparison above.
+      const compat = r.compatibles[0];
+      line["Compatible le moins cher"] = compat ? `${compat.competitorName} ${compat.priceTnd.toFixed(3)}` : "";
+      line["Compatible lien"] = compat?.url ?? "";
       for (const c of competitors) line[`${c.name} lien`] = r.cells[c.id]?.url ?? "";
       return line;
     });

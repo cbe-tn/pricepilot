@@ -98,3 +98,13 @@ const noise = stockRowFacts({ purchasePrice: "36", discountPct: "0.0004" });
 assert.equal(noise.purchase, 36);
 assert.equal(noise.note, null);
 console.log("discount rounding test passed");
+
+// Compatible ("adaptable") listings are told apart from originals.
+{
+  const { isCompatibleListing } = await import("./matching");
+  assert.equal(isCompatibleListing("Toner adaptable Kyocera TK-170 750 pages noir", "Toner Kyocera Ecosys FS 1320D TK-170"), true);
+  assert.equal(isCompatibleListing("Toner Original Kyocera TK-170 Noir", "Toner Kyocera Ecosys FS 1320D TK-170"), false);
+  assert.equal(isCompatibleListing("Toner compatible HP 17A CF217A", "Toner Noir pour HP LaserJet M102 CF217A"), true);
+  assert.equal(isCompatibleListing("Toner adaptable HP 17A", "Toner adaptable HP CF217A"), false, "we sell a compatible too: compare normally");
+  console.log("compatible detection tests passed");
+}

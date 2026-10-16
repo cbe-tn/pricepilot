@@ -333,6 +333,8 @@ export const competitorOffers = pgTable(
     matchConfidence: integer("match_confidence").default(50).notNull(),
     matchReason: text("match_reason"),
     excludedFromBenchmark: boolean("excluded_from_benchmark").default(false).notNull(),
+    /** Compatible ("adaptable") version of our reference: shown apart, never used in price comparisons. */
+    isCompatible: boolean("is_compatible").default(false).notNull(),
     userReview: text("user_review"),
     isDemo: boolean("is_demo").default(true).notNull(),
     lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }).defaultNow().notNull(),

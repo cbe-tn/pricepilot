@@ -39,6 +39,8 @@ export type BenchmarkRow = {
    * margin. "floor" = the cheapest cannot be beaten profitably, so the price stops at the minimum.
    */
   recommendation: { priceTnd: number; marginPct: number | null; kind: "beat" | "floor"; reference: number } | null;
+  /** Compatible ("adaptable") versions sold by competitors, cheapest first; never used in the comparisons above. */
+  compatibles: Array<{ competitorId: string; competitorName: string; priceTnd: number; url: string | null; title: string; availability: string }>;
 };
 
 export type BenchmarkMatrix = { competitors: Competitor[]; rows: BenchmarkRow[]; ownShop: Competitor | null };
@@ -60,6 +62,11 @@ export async function buildBenchmarkMatrix(workspaceId: string, opts?: { include
     .select()
     .from(competitorOffers)
     .where(and(eq(competitorOffers.workspaceId, workspaceId), eq(competitorOffers.excludedFromBenchmark, false)));
+  const compatibleOffers = await db
+    .select()
+    .from(competitorOffers)
+    .where(and(eq(competitorOffers.workspaceId, workspaceId), eq(competitorOffers.isCompatible, true)));
+  const compName = new Map(comps.map((c) => [c.id, c.name]));
 
   const rows = catalog
     .filter((p) => opts?.includeDemo || !p.isDemo)
@@ -124,6 +131,10 @@ export async function buildBenchmarkMatrix(workspaceId: string, opts?: { include
         cheapest: low ? { competitorId: low[0], priceTnd: low[1].priceTnd } : null,
         gapToCheapest: low && ourPrice != null ? round3(ourPrice - low[1].priceTnd) : null,
         recommendation,
+        compatibles: compatibleOffers
+          .filter((o) => o.productId === p.id && o.userReview !== "reject" && (opts?.includeDemo || !o.isDemo))
+          .map((o) => ({ competitorId: o.competitorId, competitorName: compName.get(o.competitorId) ?? "?", priceTnd: n(o.priceTnd), url: o.url, title: o.title, availability: o.availability }))
+          .sort((a, b) => a.priceTnd - b.priceTnd),
       };
     })
     .sort((a, b) => (a.product.category ?? "").localeCompare(b.product.category ?? "") || a.product.name.localeCompare(b.product.name));

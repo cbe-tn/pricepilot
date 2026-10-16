@@ -21,6 +21,13 @@ export type ConnectorDefinition = {
   capabilities: ConnectorCapability;
 };
 
+export const SELECTED_COMPETITOR_SLUGS = ["mytek", "spacenet", "tunisianet", "zoom", "graiet", "alarabia", "batam", "electrohadjkacem"] as const;
+const selectedCompetitorSlugs = new Set<string>(SELECTED_COMPETITOR_SLUGS);
+
+export function isSelectedCompetitor(competitor: { slug: string }): boolean {
+  return selectedCompetitorSlugs.has(competitor.slug);
+}
+
 export const BUILTIN_CONNECTORS: ConnectorDefinition[] = [
   {
     slug: "mytek",

@@ -8,19 +8,22 @@ import { requirePageAuth } from "@/lib/page-auth";
 import { formatDay, formatTnd, formatWhen, signedPct } from "@/lib/money";
 import { n } from "@/lib/money";
 import { fr } from "@/lib/labels";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export const metadata = { title: "Historique des prix" };
 
 export default async function HistoryPage() {
   const auth = await requirePageAuth();
-  const obs = await db
+  const allObs = await db
     .select()
     .from(priceObservations)
     .where(eq(priceObservations.workspaceId, auth.workspace.id))
     .orderBy(desc(priceObservations.observedAt))
     .limit(250);
   const catalog = await db.select().from(products).where(eq(products.workspaceId, auth.workspace.id));
-  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop);
+  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
+  const selectedCompetitorIds = new Set(comps.map((c) => c.id));
+  const obs = allObs.filter((o) => o.competitorId != null && selectedCompetitorIds.has(o.competitorId));
 
   const activityMap = new Map<string, { date: string; changes: number; discoveries: number }>();
   for (let i = 13; i >= 0; i--) {

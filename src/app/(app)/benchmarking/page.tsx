@@ -10,6 +10,7 @@ import { marketStats, positionLabel } from "@/lib/pricing";
 import { buildBenchmarkMatrix } from "@/lib/benchmark";
 import { BenchmarkTable, benchmarkLegend, coverageOf as coverage } from "@/components/BenchmarkTable";
 import { fr } from "@/lib/labels";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export const metadata = { title: "Benchmark des prix" };
 
@@ -23,8 +24,9 @@ export default async function BenchmarkingPage({
   const hideEmpty = vide === "0";
   const query = q.trim().toLowerCase();
   const catalog = await db.select().from(products).where(and(eq(products.workspaceId, auth.workspace.id), isNull(products.archivedAt)));
-  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop);
-  const offers = (await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id))).filter((o) => o.userReview !== "reject");
+  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
+  const selectedCompetitorIds = new Set(comps.map((c) => c.id));
+  const offers = (await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id))).filter((o) => o.userReview !== "reject" && selectedCompetitorIds.has(o.competitorId));
 
   const matrix = await buildBenchmarkMatrix(auth.workspace.id);
   // Competitors carrying most of our products come first; products found nowhere go last.

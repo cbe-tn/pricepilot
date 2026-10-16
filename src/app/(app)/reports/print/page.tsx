@@ -6,6 +6,7 @@ import { requirePageAuth } from "@/lib/page-auth";
 import { formatPctPoints, formatTnd, formatWhen, n } from "@/lib/money";
 import { costFromProduct, recommendPrice, taxFromWorkspace } from "@/lib/pricing";
 import { fr } from "@/lib/labels";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export const metadata = { title: "Rapport imprimable" };
 
@@ -29,15 +30,16 @@ export default async function PrintReportPage({
   const auth = await requirePageAuth();
   const { type = "profitability" } = await searchParams;
   const catalog = await db.select().from(products).where(and(eq(products.workspaceId, auth.workspace.id), isNull(products.archivedAt)));
-  const offers = await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id));
-  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop);
+  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
+  const selectedCompetitorIds = new Set(comps.map((c) => c.id));
+  const offers = (await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id))).filter((o) => selectedCompetitorIds.has(o.competitorId));
   const discoveries = await db.select().from(discoveredListings).where(eq(discoveredListings.workspaceId, auth.workspace.id));
-  const observations = await db
+  const observations = (await db
     .select()
     .from(priceObservations)
     .where(eq(priceObservations.workspaceId, auth.workspace.id))
     .orderBy(desc(priceObservations.observedAt))
-    .limit(80);
+    .limit(80)).filter((o) => o.competitorId != null && selectedCompetitorIds.has(o.competitorId));
   const quotes = await db.select().from(supplierQuotes).where(eq(supplierQuotes.workspaceId, auth.workspace.id));
   const sups = await db.select().from(suppliers).where(eq(suppliers.workspaceId, auth.workspace.id));
   const tax = taxFromWorkspace(auth.workspace);

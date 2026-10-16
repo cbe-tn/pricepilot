@@ -11,6 +11,7 @@ import { requirePageAuth } from "@/lib/page-auth";
 import { formatDay, formatPctPoints, formatTnd, formatWhen, n, relativeTime, signedTnd } from "@/lib/money";
 import { fr } from "@/lib/labels";
 import { analyzePrice, costFromProduct, marketStats, recommendPrice, taxFromWorkspace } from "@/lib/pricing";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export const metadata = { title: "Fiche produit" };
 
@@ -24,17 +25,18 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     .limit(1);
   if (!p) notFound();
 
-  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop);
+  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
+  const selectedCompetitorIds = new Set(comps.map((c) => c.id));
   const offers = (await db
     .select()
     .from(competitorOffers)
-    .where(and(eq(competitorOffers.workspaceId, auth.workspace.id), eq(competitorOffers.productId, id)))).filter((o) => o.userReview !== "reject");
-  const obs = await db
+    .where(and(eq(competitorOffers.workspaceId, auth.workspace.id), eq(competitorOffers.productId, id)))).filter((o) => o.userReview !== "reject" && selectedCompetitorIds.has(o.competitorId));
+  const obs = (await db
     .select()
     .from(priceObservations)
     .where(and(eq(priceObservations.workspaceId, auth.workspace.id), eq(priceObservations.productId, id)))
     .orderBy(desc(priceObservations.observedAt))
-    .limit(400);
+    .limit(400)).filter((o) => o.competitorId != null && selectedCompetitorIds.has(o.competitorId));
 
   const tax = taxFromWorkspace(auth.workspace, p.vatRate);
   const cost = costFromProduct(p);

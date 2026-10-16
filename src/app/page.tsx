@@ -36,7 +36,7 @@ export default async function LandingPage() {
             <span className="block text-[#9ad0da]">Gardez une longueur d’avance.</span>
           </h1>
           <p className="mt-5 max-w-xl text-base leading-relaxed text-[#c5dbe0]">
-            CBE PricePilot suit en direct les prix de Mytek, SpaceNet, Tunisianet, Graiet, Batam, Alarabia, Eleganza et Electro Hadj Kacem — pour savoir quand acheter, quand préserver votre marge et à quel prix vendre en dinars.
+            CBE PricePilot suit en direct les prix de Mytek, SpaceNet, Tunisianet, Zoom, Graiet, Batam, Alarabia et Electro Hadj Kacem — pour savoir quand acheter, quand préserver votre marge et à quel prix vendre en dinars.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/login" className="rounded-lg bg-[#d4a017] px-5 py-3 text-sm font-semibold text-[#3b2a00]">

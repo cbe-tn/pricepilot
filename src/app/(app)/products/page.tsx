@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { and, asc, desc, eq, ilike, isNotNull, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
-import { competitorOffers, products } from "@/db/schema";
+import { competitorOffers, competitors, products } from "@/db/schema";
 import { ImportForm, ProductTableClient } from "@/components/ClientWidgets";
 import { Button, Card, EmptyState, PageHeader } from "@/components/ui";
 import { requirePageAuth } from "@/lib/page-auth";
 import { formatPctPoints, formatTnd, n } from "@/lib/money";
 import { analyzePrice, costFromProduct, marketStats, positionLabel, taxFromWorkspace } from "@/lib/pricing";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export const metadata = { title: "Catalogue produits" };
 
@@ -50,7 +51,10 @@ export default async function ProductsPage({
     .where(and(...filters))
     .orderBy(order);
 
-  const offers = await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id));
+  const selectedCompetitorIds = new Set(
+    (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter(isSelectedCompetitor).map((c) => c.id),
+  );
+  const offers = (await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id))).filter((o) => selectedCompetitorIds.has(o.competitorId));
   const tax = taxFromWorkspace(auth.workspace);
 
   const table = rows.map((p) => {

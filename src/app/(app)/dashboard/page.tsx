@@ -7,6 +7,7 @@ import { Badge, Card, EmptyState, PageHeader, Stat, Tooltip } from "@/components
 import { requirePageAuth } from "@/lib/page-auth";
 import { formatDay, formatTnd, n, relativeTime } from "@/lib/money";
 import { analyzePrice, costFromProduct, marketStats, taxFromWorkspace } from "@/lib/pricing";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export const metadata = { title: "Tableau de bord" };
 
@@ -17,12 +18,14 @@ export default async function DashboardPage() {
   const since14 = new Date(Date.now() - 14 * 86400000);
 
   const catalog = await db.select().from(products).where(and(eq(products.workspaceId, ws), isNull(products.archivedAt)));
-  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, ws))).filter((c) => !c.isOwnShop);
-  const offers = await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, ws));
-  const recentChanges = await db
+  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, ws))).filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
+  const selectedCompetitorIds = new Set(comps.map((c) => c.id));
+  const offers = (await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, ws))).filter((o) => selectedCompetitorIds.has(o.competitorId));
+  const recentChanges = (await db
     .select()
     .from(priceObservations)
-    .where(and(eq(priceObservations.workspaceId, ws), gte(priceObservations.observedAt, since24h), ne(priceObservations.eventType, "unchanged")));
+    .where(and(eq(priceObservations.workspaceId, ws), gte(priceObservations.observedAt, since24h), ne(priceObservations.eventType, "unchanged"))))
+    .filter((o) => o.competitorId != null && selectedCompetitorIds.has(o.competitorId));
   const discoveries = await db
     .select()
     .from(discoveredListings)
@@ -33,10 +36,11 @@ export default async function DashboardPage() {
     .where(eq(notifications.workspaceId, ws))
     .orderBy(desc(notifications.createdAt))
     .limit(8);
-  const obs14 = await db
+  const obs14 = (await db
     .select()
     .from(priceObservations)
-    .where(and(eq(priceObservations.workspaceId, ws), gte(priceObservations.observedAt, since14)));
+    .where(and(eq(priceObservations.workspaceId, ws), gte(priceObservations.observedAt, since14))))
+    .filter((o) => o.competitorId != null && selectedCompetitorIds.has(o.competitorId));
 
   const tax = taxFromWorkspace(auth.workspace);
   const analyzed = catalog.map((p) => {
@@ -142,7 +146,7 @@ export default async function DashboardPage() {
       {empty ? (
         <EmptyState
           title="Votre catalogue est vide"
-          body="Ajoutez ou importez vos produits avec leur référence fabricant et leur prix d'achat : les prix de Mytek, SpaceNet, Tunisianet, Graiet, Batam, Alarabia, Eleganza et Electro Hadj Kacem sont ensuite récupérés automatiquement."
+          body="Ajoutez ou importez vos produits avec leur référence fabricant et leur prix d'achat : les prix de Mytek, SpaceNet, Tunisianet, Zoom, Graiet, Batam, Alarabia et Electro Hadj Kacem sont ensuite récupérés automatiquement."
           action={
             <Link href="/onboarding" className="inline-flex h-10 items-center rounded-lg bg-[#d4a017] px-4 text-sm font-semibold text-[#3b2a00]">
               Démarrer la configuration guidée

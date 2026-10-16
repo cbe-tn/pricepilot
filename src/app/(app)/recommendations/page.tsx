@@ -1,19 +1,22 @@
 import Link from "next/link";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { competitorOffers, products } from "@/db/schema";
+import { competitorOffers, competitors, products } from "@/db/schema";
 import { Badge, Card, DemoChip, PageHeader } from "@/components/ui";
 import { requirePageAuth } from "@/lib/page-auth";
 import { formatPctPoints, formatTnd, n } from "@/lib/money";
 import { costFromProduct, recommendPrice, taxFromWorkspace } from "@/lib/pricing";
 import { fr } from "@/lib/labels";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export const metadata = { title: "Recommandations" };
 
 export default async function RecommendationsPage() {
   const auth = await requirePageAuth();
   const catalog = await db.select().from(products).where(and(eq(products.workspaceId, auth.workspace.id), isNull(products.archivedAt)));
-  const offers = await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id));
+  const selectedCompetitors = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter(isSelectedCompetitor);
+  const selectedCompetitorIds = new Set(selectedCompetitors.map((c) => c.id));
+  const offers = (await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id))).filter((o) => selectedCompetitorIds.has(o.competitorId));
   const tax = taxFromWorkspace(auth.workspace);
 
   const rows = catalog.map((p) => {

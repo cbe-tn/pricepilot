@@ -7,7 +7,7 @@ import { schedulerStatus } from "@/lib/scheduler";
 import { fr } from "@/lib/labels";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { deleteCompetitorAction, toggleCompetitorAction } from "@/lib/actions";
-import { BUILTIN_CONNECTORS } from "@/lib/connectors";
+import { BUILTIN_CONNECTORS, isSelectedCompetitor } from "@/lib/connectors";
 import { requirePageAuth } from "@/lib/page-auth";
 import { formatWhen, relativeTime } from "@/lib/money";
 
@@ -15,7 +15,7 @@ export const metadata = { title: "Concurrents" };
 
 export default async function CompetitorsPage() {
   const auth = await requirePageAuth();
-  const rows = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop);
+  const rows = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
   const jobs = await db
     .select()
     .from(monitoringJobs)

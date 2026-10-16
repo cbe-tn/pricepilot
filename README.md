@@ -7,6 +7,9 @@ keeps their prices current, checks whether the article is published on our own s
 our minimum margin.
 
 The UI is in French; amounts are in Tunisian dinars (DT, 3 decimals).
+Competitor prices are limited to **Mytek, SpaceNet, Tunisianet, Zoom, Graiet, Alarabia, Batam** and
+**Electro Hadj Kacem**. The benchmark and stock tables put products with prices from the most of
+these shops first.
 
 ---
 
@@ -113,6 +116,11 @@ Promo posters (PNG **1080 × 1080**) from real catalogue products, in French, Ar
 4. **Benchmark & pricing** (`src/lib/benchmark.ts`, `src/lib/pricing.ts`).
 
 There is **no AI model** in the app: matching, VAT and recommendations are deterministic rules.
+
+The office-only `scripts/primini-sync.ts` can fill prices from Primini for those eight shops. When a
+matching public seller product page is available, its direct URL and live price are used; otherwise
+the offer retains the Primini-reported price but links to the seller's own website. Primini tracking
+redirect links are not stored as seller links.
 
 ### Scraping etiquette
 

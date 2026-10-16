@@ -6,6 +6,7 @@ import { competitorOffers, competitors, products, workspaces, type Competitor, t
 import { n, round3 } from "@/lib/money";
 import { costFromProduct, recommendPrice, taxFromWorkspace } from "@/lib/pricing";
 import type { MatchClass } from "@/lib/matching";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export type BenchmarkCell = {
   priceTnd: number;
@@ -52,7 +53,7 @@ function margin(price: number, cost: number): number | null {
 export async function buildBenchmarkMatrix(workspaceId: string, opts?: { includeDemo?: boolean; category?: string }): Promise<BenchmarkMatrix> {
   const all = (await db.select().from(competitors).where(eq(competitors.workspaceId, workspaceId))).sort((a, b) => a.name.localeCompare(b.name));
   // Our own web shop is indexed like a competitor but never benchmarked against.
-  const comps = all.filter((c) => !c.isOwnShop);
+  const comps = all.filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
   const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
   const catalog = await db
     .select()
@@ -66,6 +67,7 @@ export async function buildBenchmarkMatrix(workspaceId: string, opts?: { include
     .select()
     .from(competitorOffers)
     .where(and(eq(competitorOffers.workspaceId, workspaceId), eq(competitorOffers.isCompatible, true)));
+  const selectedCompetitorIds = new Set(comps.map((c) => c.id));
   const compName = new Map(comps.map((c) => [c.id, c.name]));
 
   const rows = catalog
@@ -132,7 +134,7 @@ export async function buildBenchmarkMatrix(workspaceId: string, opts?: { include
         gapToCheapest: low && ourPrice != null ? round3(ourPrice - low[1].priceTnd) : null,
         recommendation,
         compatibles: compatibleOffers
-          .filter((o) => o.productId === p.id && o.userReview !== "reject" && (opts?.includeDemo || !o.isDemo))
+          .filter((o) => o.productId === p.id && selectedCompetitorIds.has(o.competitorId) && o.userReview !== "reject" && (opts?.includeDemo || !o.isDemo))
           .map((o) => ({ competitorId: o.competitorId, competitorName: compName.get(o.competitorId) ?? "?", priceTnd: n(o.priceTnd), url: o.url, title: o.title, availability: o.availability }))
           .sort((a, b) => a.priceTnd - b.priceTnd),
       };

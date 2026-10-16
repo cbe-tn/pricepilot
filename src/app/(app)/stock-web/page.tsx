@@ -36,11 +36,11 @@ export default async function StockWebPage({ searchParams }: { searchParams: Pro
       if (conc === "moins") return r.gapToCheapest != null && r.gapToCheapest > 0;
       return true;
     })
-    // Products that need action first: missing from our site, then where a competitor is cheaper.
+    // Put products with the broadest competitor coverage first, then surface our own-site gaps.
     .sort(
       (a, b) =>
-        Number(statusOf(b) === "missing") - Number(statusOf(a) === "missing") ||
         coverageOf(b) - coverageOf(a) ||
+        Number(statusOf(b) === "missing") - Number(statusOf(a) === "missing") ||
         (b.gapToCheapest ?? -Infinity) - (a.gapToCheapest ?? -Infinity),
     );
 

@@ -7,6 +7,7 @@ import { toCsv } from "@/lib/csv";
 import { n } from "@/lib/money";
 import { costFromProduct, recommendPrice, taxFromWorkspace } from "@/lib/pricing";
 import { fr } from "@/lib/labels";
+import { isSelectedCompetitor } from "@/lib/connectors";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +20,9 @@ export async function GET(req: Request) {
   const generatedAt = new Date().toISOString();
 
   const catalog = await db.select().from(products).where(and(eq(products.workspaceId, auth.workspace.id), isNull(products.archivedAt)));
-  const offers = await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id));
-  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop);
+  const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
+  const selectedCompetitorIds = new Set(comps.map((c) => c.id));
+  const offers = (await db.select().from(competitorOffers).where(eq(competitorOffers.workspaceId, auth.workspace.id))).filter((o) => selectedCompetitorIds.has(o.competitorId));
   const tax = taxFromWorkspace(auth.workspace);
 
   let rows: Record<string, unknown>[] = [];
@@ -28,12 +30,12 @@ export async function GET(req: Request) {
     const d = await db.select().from(discoveredListings).where(eq(discoveredListings.workspaceId, auth.workspace.id));
     rows = d.map((x) => ({ "Désignation": x.title, Marque: x.brand, "Prix DT": n(x.priceTnd), "Vu le": x.firstSeenAt, "Généré le": generatedAt }));
   } else if (type === "changes") {
-    const obs = await db
+    const obs = (await db
       .select()
       .from(priceObservations)
       .where(eq(priceObservations.workspaceId, auth.workspace.id))
       .orderBy(desc(priceObservations.observedAt))
-      .limit(200);
+      .limit(200)).filter((o) => o.competitorId != null && selectedCompetitorIds.has(o.competitorId));
     rows = obs
       .filter((o) => o.eventType !== "unchanged")
       .map((o) => ({

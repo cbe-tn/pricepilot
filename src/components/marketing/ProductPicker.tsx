@@ -156,9 +156,11 @@ export function ProductPicker({ products }: { products: PosterProduct[] }) {
                       </td>
                       <td className="min-w-[260px]">
                         <div className="flex items-center gap-2">
-                          {p.hasPhoto ? (
+                          {/* Photos load only for selected rows: one request per photo through the server,
+                              so a full list would open too many database connections at once. */}
+                          {p.hasPhoto && on ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={`/api/marketing/image?product=${p.id}`} 
+                            <img src={`/api/marketing/image?product=${p.id}`}
                               alt=""
                               loading="lazy"
                               className="h-10 w-10 shrink-0 rounded bg-white object-contain"
@@ -168,7 +170,9 @@ export function ProductPicker({ products }: { products: PosterProduct[] }) {
                               }}
                             />
                           ) : (
-                            <span className="grid h-10 w-10 shrink-0 place-items-center rounded bg-[#eef3f5] text-[9px] text-[#8aa0a6]">sans photo</span>
+                            <span className="grid h-10 w-10 shrink-0 place-items-center rounded bg-[#eef3f5] text-center text-[9px] leading-tight text-[#8aa0a6]">
+                              {p.hasPhoto ? "photo" : "sans photo"}
+                            </span>
                           )}
                           <div className="min-w-0">
                             <div className="font-medium">{p.name}</div>

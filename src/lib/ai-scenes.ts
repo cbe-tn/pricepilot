@@ -78,8 +78,9 @@ export const aiScenesConfigured = () => Boolean(process.env.CLOUDFLARE_ACCOUNT_I
 export const AI_SCENES_PER_DAY = Math.max(1, Number(process.env.AI_SCENES_PER_DAY) || 40);
 
 export async function generateSceneImage(prompt: string): Promise<{ ok: true; bytes: Buffer; mime: string } | { ok: false; error: string }> {
-  const account = process.env.CLOUDFLARE_ACCOUNT_ID;
-  const token = process.env.CLOUDFLARE_AI_TOKEN;
+  // Tolerate copy-paste noise in the Vercel settings (spaces, line breaks, a pasted "Bearer " prefix).
+  const account = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+  const token = process.env.CLOUDFLARE_AI_TOKEN?.trim().replace(/^Bearer\s+/i, "");
   if (!account || !token) return { ok: false, error: "Génération IA non configurée (CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_AI_TOKEN)." };
   const model = process.env.CLOUDFLARE_AI_MODEL || "@cf/black-forest-labs/flux-1-schnell";
   try {
@@ -99,6 +100,8 @@ export async function generateSceneImage(prompt: string): Promise<{ ok: true; by
     if (res.ok && b64) return { ok: true, bytes: Buffer.from(b64, "base64"), mime: "image/jpeg" };
     const err = data?.errors?.[0];
     if (res.status === 429 || err?.code === 4006) return { ok: false, error: "Quota gratuit Cloudflare du jour atteint — réessayez demain (remise à zéro à 1 h, heure de Tunis)." };
+    if (res.status === 401 || res.status === 403 || err?.code === 10000)
+      return { ok: false, error: "Cloudflare refuse le jeton (Authentication error) : créez un jeton avec le modèle « Workers AI » (pas la Global API Key) pour le même compte que CLOUDFLARE_ACCOUNT_ID, puis redéployez." };
     if (err?.code === 3030) return { ok: false, error: "Description refusée par le filtre de sécurité : reformulez les détails." };
     return { ok: false, error: `Génération impossible${err?.message ? ` : ${err.message}` : ` (HTTP ${res.status})`}.` };
   } catch {

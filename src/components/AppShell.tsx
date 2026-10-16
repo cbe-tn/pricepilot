@@ -22,6 +22,7 @@ import {
   Search,
   LogOut,
   Menu,
+  Megaphone,
 } from "lucide-react";
 import { logoutAction, searchProductsAction } from "@/lib/actions";
 import { cn } from "@/components/ui";
@@ -32,6 +33,7 @@ const NAV = [
   { href: "/products", label: "Catalogue produits", icon: Package },
   { href: "/benchmarking", label: "Benchmark des prix", icon: Scale },
   { href: "/stock-web", label: "Stock & site web", icon: Store },
+  { href: "/marketing", label: "AI Marketing Studio", icon: Megaphone },
   { href: "/competitors", label: "Concurrents", icon: Globe },
   { href: "/discovery", label: "Nouveaux produits", icon: Sparkles },
   { href: "/history", label: "Historique des prix", icon: LineChart },
@@ -90,7 +92,7 @@ export function AppShell({
       const known = NAV.find((n) => n.href === href);
       acc.push({
         href,
-        label: known?.label ?? CRUMB_LABELS[part] ?? (/^[0-9a-f-]{36}$/.test(part) ? "Fiche produit" : part.replace(/-/g, " ")),
+        label: known?.label ?? CRUMB_LABELS[part] ?? (/^[0-9a-f-]{36}$/.test(part) ? (parts[0] === "marketing" ? "Affiche" : "Fiche produit") : part.replace(/-/g, " ")),
       });
     }
     return acc;

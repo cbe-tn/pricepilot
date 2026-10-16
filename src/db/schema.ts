@@ -598,7 +598,32 @@ export const jobLeases = pgTable("job_leases", {
   lockedUntil: timestamp("locked_until", { withTimezone: true }).notNull(),
 });
 
+// Marketing Studio posters. Prices stay in the catalogue: the design only stores layout, texts and the
+// promo price typed by the user; every check (old price, margin floor, stock) is recomputed server-side.
+export const marketingCampaigns = pgTable(
+  "marketing_campaigns",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    productIds: jsonb("product_ids").$type<string[]>().default([]).notNull(),
+    design: jsonb("design").$type<Record<string, unknown>>().default({}).notNull(),
+    /** Previous designs, newest first (capped), for "revenir à une version précédente". */
+    versions: jsonb("versions").$type<Array<{ at: string; design: Record<string, unknown> }>>().default([]).notNull(),
+    /** draft · validated (checks passed and confirmed by the user; any edit returns it to draft). */
+    status: text("status").default("draft").notNull(),
+    validatedAt: timestamp("validated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("marketing_campaigns_workspace_idx").on(t.workspaceId, t.updatedAt)],
+);
+
 export type Workspace = typeof workspaces.$inferSelect;
+export type MarketingCampaign = typeof marketingCampaigns.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type Competitor = typeof competitors.$inferSelect;

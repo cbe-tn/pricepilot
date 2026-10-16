@@ -7,7 +7,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "bun src/lib/pricing.test.ts",
+    "test": "bun src/lib/pricing.test.ts && bun src/lib/poster.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

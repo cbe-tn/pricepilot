@@ -19,6 +19,8 @@ export type BenchmarkCell = {
   seller: string | null;
   /** Listing title on the competitor site. */
   title: string;
+  /** When this price was last read on the competitor site. */
+  checkedAt: Date;
 };
 
 export type BenchmarkRow = {
@@ -83,6 +85,7 @@ export async function buildBenchmarkMatrix(workspaceId: string, opts?: { include
           stale: o.stale,
           seller: o.sellerName,
           title: o.title,
+          checkedAt: o.lastCheckedAt,
         };
       }
       // Recommend from exactly the prices shown in the row (one per competitor), so "cheapest" and

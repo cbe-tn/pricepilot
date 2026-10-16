@@ -29,6 +29,45 @@ The UI is in French; amounts are in Tunisian dinars (DT, 3 decimals).
   minimum-margin floor (then shown as *plancher*) — `src/lib/pricing.ts`.
 - Our own shop is indexed like a competitor but is **never** used as a competitor.
 
+### AI Marketing Studio (`/marketing`)
+
+Promo posters (PNG **1080 × 1080**) from real catalogue products, in French, Arabic or both.
+
+- **Meilleurs produits à promouvoir**: products ranked by a transparent score (price vs the cheapest
+  *confirmed* competitor, margin, stock, data quality) with adjustable weights. Missing data is flagged,
+  never estimated. 1 product = product poster, 2–4 products = pack.
+- **Editor** (`/marketing/[id]`): texts, colours (brand palette only), style, product order, drag and
+  resize on the canvas, previous versions. The preview canvas *is* the exported file.
+- **Commercial rules** (`src/lib/poster.ts`, checked again on the server before export):
+  the crossed-out price is the confirmed **numedia.tn** price (sum for a pack), never typed by hand;
+  the user types the promo / pack price, which must respect the 3 % margin floor; out-of-stock products
+  and products without an official photo are blocked. Download unlocks only after *Valider l'affiche*.
+- **Photos**: official photo = `og:image` of the confirmed numedia.tn page, served through
+  `/api/marketing/image` (same origin, so the canvas stays exportable) and cached in `products.image_url`.
+  Logos: `public/brand/numedia-logo.webp` (from numedia.tn) and `public/brand/logo-full.png` (CBE) —
+  replace them with HD files to improve the badge.
+- No paid AI is used yet: layout and texts are deterministic templates. AI copywriting or generated
+  backgrounds can be added later behind a server-side API key; prices are never sent to or drawn by a model.
+- Table `marketing_campaigns` (created by hand on Supabase, like other recent columns):
+
+  ```sql
+  create table if not exists public.marketing_campaigns (
+    id uuid primary key default gen_random_uuid(),
+    workspace_id uuid not null references public.workspaces(id) on delete cascade,
+    created_by uuid references public.users(id) on delete set null,
+    name text not null,
+    product_ids jsonb not null default '[]'::jsonb,
+    design jsonb not null default '{}'::jsonb,
+    versions jsonb not null default '[]'::jsonb,
+    status text not null default 'draft',
+    validated_at timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create index if not exists marketing_campaigns_workspace_idx on public.marketing_campaigns (workspace_id, updated_at);
+  alter table public.marketing_campaigns enable row level security;
+  ```
+
 ---
 
 ## How it works

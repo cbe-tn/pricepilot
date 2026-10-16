@@ -8,7 +8,7 @@ export const MAX_POSTER_PRODUCTS = 4;
 export const OWN_PRICE_MAX_AGE_DAYS = 3;
 
 export type PosterLang = "fr" | "ar" | "bi";
-export type PosterTheme = "studio" | "promo" | "premium";
+export type PosterTheme = "studio" | "promo" | "premium" | "podium" | "neon" | "split" | "flash" | "minimal" | "aurora";
 export type PosterBrand = "numedia" | "cbe";
 export type PosterElement = "title" | "products" | "price" | "benefits";
 
@@ -76,6 +76,12 @@ export const THEMES: Array<{ value: PosterTheme; label: string }> = [
   { value: "studio", label: "Studio clair" },
   { value: "promo", label: "Promo jaune" },
   { value: "premium", label: "Premium sombre" },
+  { value: "podium", label: "Podium 3D" },
+  { value: "neon", label: "Néon tech" },
+  { value: "split", label: "Diagonale" },
+  { value: "flash", label: "Vente flash" },
+  { value: "minimal", label: "Éditorial" },
+  { value: "aurora", label: "Aurora" },
 ];
 
 const DEFAULT_LAYOUT: Record<PosterElement, ElementLayout> = {
@@ -136,6 +142,7 @@ export function normalizeDesign(raw: Partial<PosterDesign>, products: PosterProd
     benefits: (raw.benefits ?? []).slice(0, 3),
     benefitsAr: (raw.benefitsAr ?? []).slice(0, 3),
     accent: BRAND_COLORS.some((c) => c.value === raw.accent) ? raw.accent! : base.accent,
+    theme: THEMES.some((t) => t.value === raw.theme) ? raw.theme! : base.theme,
     productOrder: order,
     layout: { ...structuredClone(DEFAULT_LAYOUT), ...(raw.layout ?? {}) },
   };

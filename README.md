@@ -36,7 +36,9 @@ Promo posters (PNG **1080 × 1080**) from real catalogue products, in French, Ar
 - **Meilleurs produits à promouvoir**: products ranked by a transparent score (price vs the cheapest
   *confirmed* competitor, margin, stock, data quality) with adjustable weights. Missing data is flagged,
   never estimated. 1 product = product poster, 2–4 products = pack.
-- **Editor** (`/marketing/[id]`): texts, colours (brand palette only), style, product order, drag and
+- **Editor** (`/marketing/[id]`): texts, colours (brand palette only), 9 styles shown as a live gallery
+  (Studio, Promo jaune, Premium, Podium 3D, Néon tech, Diagonale, Vente flash, Éditorial, Aurora) with a
+  « Surprends-moi » button, product order, drag and
   resize on the canvas, previous versions. The preview canvas *is* the exported file.
 - **Commercial rules** (`src/lib/poster.ts`, checked again on the server before export):
   the crossed-out price is the confirmed **numedia.tn** price (sum for a pack), never typed by hand;

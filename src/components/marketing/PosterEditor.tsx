@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, Download, RotateCcw, Save, ShieldCheck } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, RotateCcw, Save, ShieldCheck, Shuffle } from "lucide-react";
 import { Badge, Button, Card, Field, Input, Select } from "@/components/ui";
 import { drawPoster, type Box, type PosterAssets } from "@/components/marketing/render";
 import { refreshPhotoAction, saveCampaignAction, validateCampaignAction } from "@/lib/marketing-actions";
@@ -40,7 +40,7 @@ export function PosterEditor({
 }: {
   campaign: { id: string; name: string; status: string; validatedAt: string | null; design: PosterDesign; versions: Version[] };
   initialProducts: PosterProduct[];
-  fonts: { latin: string; arabic: string };
+  fonts: PosterAssets["fonts"];
 }) {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -78,7 +78,7 @@ export function PosterEditor({
     let cancelled = false;
     (async () => {
       await Promise.all(
-        [fonts.latin, fonts.arabic].flatMap((f) => [500, 600, 800, 900].map((w) => document.fonts.load(`${w} 40px ${f}`, "Aa عربي 0123").catch(() => []))),
+        [fonts.latin, fonts.arabic, fonts.display, fonts.serif].flatMap((f) => [500, 600, 800, 900].map((w) => document.fonts.load(`${w} 40px ${f}`, "Aa عربي 0123").catch(() => []))),
       );
       const logoSrc = design.brand === "cbe" ? "/brand/logo-full.png" : "/brand/numedia-logo.webp";
       const [logo, ...photos] = await Promise.all([
@@ -123,6 +123,15 @@ export function PosterEditor({
   };
   const onPointerUp = () => {
     drag.current = null;
+  };
+
+  // Random style and brand colour, layout back to the template defaults.
+  const surprise = () => {
+    const others = THEMES.filter((t) => t.value !== design.theme);
+    const theme = others[Math.floor(Math.random() * others.length)].value;
+    const accent = Math.random() < 0.6 ? design.accent : BRAND_COLORS[Math.floor(Math.random() * BRAND_COLORS.length)].value;
+    const home = { dx: 0, dy: 0, scale: 1 };
+    update({ theme, accent, layout: { title: home, products: home, price: home, benefits: home } });
   };
 
   const setScale = (el: PosterElement, scale: number) => update({ layout: { ...design.layout, [el]: { ...design.layout[el], scale } } });
@@ -278,15 +287,6 @@ export function PosterEditor({
                 <option value="cbe">CBE — Cap Bon Electronique</option>
               </Select>
             </Field>
-            <Field label="Style">
-              <Select value={design.theme} onChange={(e) => update({ theme: e.target.value as PosterDesign["theme"] })}>
-                {THEMES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-[#4d6a72]">Couleur</span>
@@ -301,6 +301,16 @@ export function PosterEditor({
               />
             ))}
           </div>
+        </Card>
+
+        <Card>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">Style de l’affiche</h2>
+            <Button size="sm" variant="secondary" onClick={surprise}>
+              <Shuffle size={14} /> Surprends-moi
+            </Button>
+          </div>
+          <StyleGallery design={design} products={products} pricing={check.pricing} assets={assets} onPick={(theme) => update({ theme })} />
         </Card>
 
         <Card>
@@ -498,6 +508,62 @@ export function PosterEditor({
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+const THUMB = 216;
+
+/** Every style rendered live with the current products and texts; click to apply. */
+function StyleGallery({
+  design,
+  products,
+  pricing,
+  assets,
+  onPick,
+}: {
+  design: PosterDesign;
+  products: PosterProduct[];
+  pricing: ReturnType<typeof checkPoster>["pricing"];
+  assets: PosterAssets | null;
+  onPick: (theme: PosterDesign["theme"]) => void;
+}) {
+  const refs = useRef(new Map<string, HTMLCanvasElement>());
+  useEffect(() => {
+    if (!assets) return;
+    // Debounced: typing in a text field should not repaint nine posters on every key.
+    const timer = setTimeout(() => {
+      for (const t of THEMES) {
+        const ctx = refs.current.get(t.value)?.getContext("2d");
+        if (!ctx) continue;
+        ctx.setTransform(THUMB / POSTER_SIZE, 0, 0, THUMB / POSTER_SIZE, 0, 0);
+        drawPoster(ctx, { ...design, theme: t.value }, products, pricing, assets);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [design, products, pricing, assets]);
+
+  return (
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+      {THEMES.map((t) => (
+        <button
+          key={t.value}
+          type="button"
+          onClick={() => onPick(t.value)}
+          className={`overflow-hidden rounded-lg border-2 bg-white text-left transition ${design.theme === t.value ? "border-[#0b8fa3] ring-2 ring-[#0b8fa3]/30" : "border-[#e3ecee] hover:border-[#0b4a56]"}`}
+        >
+          <canvas
+            ref={(el) => {
+              if (el) refs.current.set(t.value, el);
+              else refs.current.delete(t.value);
+            }}
+            width={THUMB}
+            height={THUMB}
+            className="block aspect-square w-full"
+          />
+          <span className="block px-2 py-1 text-[11px] font-medium">{t.label}</span>
+        </button>
+      ))}
     </div>
   );
 }

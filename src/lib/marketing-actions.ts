@@ -8,7 +8,7 @@ import { db } from "@/db";
 import { marketingCampaigns, products } from "@/db/schema";
 import { getAuth, writeAudit } from "@/lib/auth";
 import { loadPosterProducts, officialPhotoUrl } from "@/lib/marketing";
-import { BRAND_COLORS, checkPoster, defaultDesign, MAX_POSTER_PRODUCTS, normalizeDesign, type PosterCheck, type PosterDesign, type PosterProduct } from "@/lib/poster";
+import { BRAND_COLORS, checkPoster, defaultDesign, MAX_POSTER_PRODUCTS, normalizeDesign, THEMES, type PosterCheck, type PosterDesign, type PosterProduct } from "@/lib/poster";
 
 const MAX_VERSIONS = 15;
 
@@ -23,7 +23,7 @@ const layout = z.object({ dx: z.number().min(-1080).max(1080), dy: z.number().mi
 const designSchema = z.object({
   brand: z.enum(["numedia", "cbe"]),
   lang: z.enum(["fr", "ar", "bi"]),
-  theme: z.enum(["studio", "promo", "premium"]),
+  theme: z.enum(THEMES.map((t) => t.value) as [PosterDesign["theme"], ...PosterDesign["theme"][]]),
   accent: z.enum(BRAND_COLORS.map((c) => c.value) as [string, ...string[]]),
   title: text(80),
   titleAr: text(80),

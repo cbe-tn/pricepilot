@@ -13,10 +13,12 @@ export default async function StockWebPage({ searchParams }: { searchParams: Pro
   const auth = await requirePageAuth();
   const sp = await searchParams;
   const { q = "", site = "", conc = "" } = sp;
-  const allProducts = sp.tous === "1";
   const query = q.trim().toLowerCase();
 
   const matrix = await buildBenchmarkMatrix(auth.workspace.id);
+  // A supplier price list has no quantities: with no article in stock, show the whole catalogue instead of nothing.
+  const noStockData = matrix.rows.length > 0 && matrix.rows.every((r) => r.product.stockQty <= 0);
+  const allProducts = sp.tous === "1" || noStockData;
   const stock = matrix.rows.filter((r) => allProducts || r.product.stockQty > 0);
 
   const compCount = new Map(matrix.competitors.map((c) => [c.id, stock.filter((r) => r.cells[c.id]).length]));
@@ -111,6 +113,12 @@ export default async function StockWebPage({ searchParams }: { searchParams: Pro
         </div>
       </Card>
 
+      {noStockData ? (
+        <p className="mb-3 rounded-lg bg-[#fff4d6] p-3 text-sm text-[#8a6100]">
+          Aucun article n’a de quantité en stock : le dernier fichier importé n’avait pas de colonne Qté (liste de prix fournisseur ?). Tout le catalogue est
+          affiché. Importez votre état de stock (Réf + Qté) pour mettre à jour les quantités — les articles existants sont mis à jour par leur référence.
+        </p>
+      ) : null}
       {!matrix.ownShop ? (
         <p className="mb-3 rounded-lg bg-[#fff4d6] p-3 text-sm text-[#8a6100]">
           Aucun site propre configuré : la colonne « Notre site » restera vide. Ajoutez votre site dans Concurrents (case « notre site »).

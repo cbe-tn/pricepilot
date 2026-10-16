@@ -235,7 +235,13 @@ export function ProductPicker({ products }: { products: PosterProduct[] }) {
                 </Button>
               </div>
             ) : null}
-            {!rows.length ? <p className="p-6 text-center text-sm text-[#6b858c]">Aucun produit ne correspond. Décochez « Prêts pour une affiche » pour tout voir.</p> : null}
+            {!rows.length ? (
+              <p className="p-6 text-center text-sm text-[#6b858c]">
+                {readyOnly && products.length > 0 && products.every((p) => p.stockQty <= 0)
+                  ? `Aucun des ${products.length} produits n’a de quantité en stock (fichier sans colonne Qté ?) : importez votre état de stock dans « Stock & site web » pour pouvoir les promouvoir. Décochez « Prêts pour une affiche » pour voir le catalogue.`
+                  : "Aucun produit ne correspond. Décochez « Prêts pour une affiche » pour tout voir."}
+              </p>
+            ) : null}
           </div>
         </Card>
 

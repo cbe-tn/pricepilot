@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { sql } from "drizzle-orm";
+import { aiScenesConfigured } from "@/lib/ai-scenes";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,8 @@ export async function GET() {
   const started = Date.now();
   try {
     await db.execute(sql`select 1`);
-    return Response.json({ ok: true, database: databaseKind(), latencyMs: Date.now() - started });
+    // aiScenes: only whether the free AI keys are set, never their values.
+    return Response.json({ ok: true, database: databaseKind(), latencyMs: Date.now() - started, aiScenes: aiScenesConfigured() });
   } catch {
     return Response.json({ ok: false, database: databaseKind(), error: "database unreachable" }, { status: 500 });
   }

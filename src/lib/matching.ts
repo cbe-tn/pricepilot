@@ -208,3 +208,8 @@ const COMPATIBLE_RE = /\b(adaptables?|compatibles?|g[ée]n[ée]riques?|remanufac
 export function isCompatibleListing(listingTitle: string, productName: string): boolean {
   return COMPATIBLE_RE.test(listingTitle) && !COMPATIBLE_RE.test(productName);
 }
+
+/** Offers whose price was read on the Primini comparator page (refreshed by the local Primini sync). */
+export function isPriminiUrl(url: string | null | undefined): boolean {
+  return Boolean(url && /^https?:\/\/(www\.)?primini\.tn\//i.test(url));
+}

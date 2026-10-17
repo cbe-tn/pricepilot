@@ -11,6 +11,7 @@ import {
 } from "@/db/schema";
 import { probeCompetitor } from "@/lib/connectors";
 import { fetchLiveOffer } from "@/lib/extract";
+import { isPriminiUrl } from "@/lib/matching";
 import { sellerExclusions } from "@/lib/catalog";
 import { formatTnd, moneyStr, n } from "@/lib/money";
 import type { AuthContext } from "@/lib/auth";
@@ -98,7 +99,8 @@ export async function runMonitoringJob(auth: AuthContext, opts?: { competitorId?
     // Checked recently (e.g. earlier in this resumed cycle) = not due yet.
     const freshSince = Date.now() - Math.max(30, source.monitoringFrequencyMinutes - 30) * 60000;
     const toCheck = offers
-      .filter((o) => o.userReview !== "reject" && (!opts?.deadline || !o.lastCheckedAt || +o.lastCheckedAt < freshSince))
+      // Prices read via Primini are refreshed by the local Primini sync (the comparator refuses our servers).
+      .filter((o) => o.userReview !== "reject" && !isPriminiUrl(o.url) && (!opts?.deadline || !o.lastCheckedAt || +o.lastCheckedAt < freshSince))
       .sort((a, b) => +(a.lastCheckedAt ?? 0) - +(b.lastCheckedAt ?? 0));
 
     let liveChecked = 0;

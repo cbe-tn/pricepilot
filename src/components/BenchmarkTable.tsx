@@ -188,7 +188,9 @@ export function BenchmarkTable({
             return (
               <th key={c.id} className="max-w-[92px] text-right" title={blocked ? c.lastError ?? "" : `${c.name} — ${compCount.get(c.id) ?? 0} produits trouvés`}>
                 <div className="truncate">{c.name}</div>
-                {blocked ? (
+                {blocked && (compCount.get(c.id) ?? 0) > 0 ? (
+                  <div className="text-[9px] font-normal normal-case text-[#8a6100]">{compCount.get(c.id)} prod. via Primini</div>
+                ) : blocked ? (
                   <div className="text-[9px] font-semibold normal-case text-[#b42323]">accès bloqué</div>
                 ) : (
                   <div className="text-[9px] font-normal normal-case text-[#8aa1a7]">{compCount.get(c.id) ?? 0} prod.</div>

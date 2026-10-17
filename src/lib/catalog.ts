@@ -60,7 +60,9 @@ function isLikelyProductUrl(url: string): boolean {
     (path.endsWith(".html") && path.length > 6) ||
     /^\/product\/\d+\/[^/]+/.test(path) ||
     /^\/products\/[^/]+\/?$/.test(path) ||
-    /^\/produit\/[^/]+\/?$/.test(path)
+    /^\/produit\/[^/]+\/?$/.test(path) ||
+    // Primini comparator: "/prix/<id>/<slug>".
+    /^\/prix\/\d+\/[^/]+/.test(path)
   );
 }
 

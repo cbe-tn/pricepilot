@@ -34,6 +34,7 @@ import {
 } from "@/lib/auth";
 import { BUILTIN_CONNECTORS } from "@/lib/connectors";
 import { matchListing } from "@/lib/matching";
+import { deriveIdentity } from "@/lib/identity";
 import { moneyStr, n } from "@/lib/money";
 import { runMonitoringJob } from "@/lib/monitoring";
 import { fetchLiveOffer } from "@/lib/extract";
@@ -499,13 +500,15 @@ export async function importProductsAction(formData: FormData) {
       updated += 1;
       continue;
     }
+    // Files without brand / reference columns: derive them from the name (completed later from our shop's title).
+    const derived = deriveIdentity(name);
     await db.insert(products).values({
       workspaceId: auth.workspace.id,
       name,
-      brand: row.brand || null,
-      manufacturer: row.manufacturer || row.brand || null,
-      model,
-      manufacturerRef: ref,
+      brand: row.brand || derived.brand,
+      manufacturer: row.manufacturer || row.brand || derived.brand,
+      model: model || derived.model,
+      manufacturerRef: ref || derived.reference,
       barcode,
       sku: row.sku || null,
       category: row.category || null,

@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { competitorCatalog, competitorOffers, competitors, priceObservations, products, workspaces, type Competitor, type Product } from "@/db/schema";
 import { USER_AGENT, compactText, fetchLiveOffer, fetchWithTimeout, isAllowedByRobots, politeDelay, type Availability } from "@/lib/extract";
 import { isCompatibleListing, matchListing, type MatchClass } from "@/lib/matching";
+import { deriveIdentity } from "@/lib/identity";
 import { moneyStr, n } from "@/lib/money";
 import type { AuthContext } from "@/lib/auth";
 
@@ -752,11 +753,23 @@ export async function matchOwnListing(auth: AuthContext, product: Product): Prom
   }
   if (!best && !review) review = await ownFallbackCandidate(own, product);
   const hit = best ?? review;
+  // A confirmed listing on our shop has a clean title: fill brand / model / reference when the import had none,
+  // and search the competitors again with the new reference.
+  const identity: Partial<typeof products.$inferInsert> = {};
+  if (best?.title) {
+    const d = deriveIdentity(product.name, best.title);
+    if (!product.brand && d.brand) identity.brand = d.brand;
+    if (!product.model && d.model) identity.model = d.model;
+    if (!product.manufacturerRef && d.reference) {
+      identity.manufacturerRef = d.reference;
+      identity.lastMatchedAt = null;
+    }
+  }
   await db
     .update(products)
     .set(
       hit
-        ? { ownUrl: hit.url, ownTitle: hit.title, ownPriceTnd: moneyStr(hit.priceTnd!), ownAvailability: hit.availability, ownStatus: best ? "found" : "review", ownCheckedAt: now }
+        ? { ownUrl: hit.url, ownTitle: hit.title, ownPriceTnd: moneyStr(hit.priceTnd!), ownAvailability: hit.availability, ownStatus: best ? "found" : "review", ownCheckedAt: now, ...identity }
         : { ownUrl: null, ownTitle: null, ownPriceTnd: null, ownAvailability: null, ownStatus: "missing", ownCheckedAt: now },
     )
     .where(eq(products.id, product.id));

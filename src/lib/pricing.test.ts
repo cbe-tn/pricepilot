@@ -108,3 +108,17 @@ console.log("discount rounding test passed");
   assert.equal(isCompatibleListing("Toner adaptable HP 17A", "Toner adaptable HP CF217A"), false, "we sell a compatible too: compare normally");
   console.log("compatible detection tests passed");
 }
+
+// Brand / model / reference derived from titles for products imported without them.
+{
+  const { deriveIdentity } = await import("./identity");
+  const id = (name: string, own?: string) => deriveIdentity(name, own ?? null);
+  assert.deepEqual(id("tcl leduhd50p615 televiseur", "TCL LEDUHD50P615, Téléviseur 50 pouces UHD 4K Smart TV..."), { brand: "TCL", model: "LEDUHD50P615", reference: "LEDUHD50P615" });
+  assert.equal(id("x", "Russell Hobbs 22591-70, Bouilloire Textures").reference, "22591-70");
+  assert.equal(id("Toner Kyocera Ecosys FS 1320D/P2135DN TK-170").reference, "TK-170", "consumable: its own reference, not the printers'");
+  assert.equal(id("XVR301-16G3 UNIVIEW 16 CH 5MP 16BNC H265").reference, "XVR301-16G3");
+  assert.equal(id("x", "Four Micro ondes LG MS2042DB 700 W 20 litres en Tunisie").model, "MS2042DB");
+  assert.equal(id("x", "Huawei Y7 Prime 2018, un Smartphone").reference, null, "no reference invented");
+  assert.equal(id("Micro à fil Simple en Noir").brand, null);
+  console.log("identity tests passed");
+}

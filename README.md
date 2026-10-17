@@ -276,3 +276,14 @@ whole pass so Vercel does not stop the function early. To stop: `select cron.uns
   and flagged until it can be read again.
 - Competitor connectors are site-specific (`src/lib/connectors.ts`); a new shop usually only needs
   its URL if it publishes a sitemap and structured product data.
+
+### Primini sync (office PC)
+
+Primini, Mytek and Graiet refuse requests from Vercel, so `scripts/primini-sync.ts` runs on an office PC
+(normal connection, same polite crawler: identified user agent, robots.txt, 2 s between requests). Prices
+are filed under each shop's own column, never a "Primini" column; the cloud monitoring skips them.
+
+- Launcher: `scripts/primini-sync.cmd` (reads `DATABASE_URL` from `.env.supabase`, logs to
+  `%LOCALAPPDATA%\PricePilot\primini-sync.log`).
+- Windows scheduled task **"PricePilot - Primini sync"**: daily at 06:30, or as soon as the PC is on
+  if it was off then; runs while the user is logged in. A full pass over ~3,800 products takes ~2 h.

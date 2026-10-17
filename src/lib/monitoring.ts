@@ -206,11 +206,13 @@ export async function runMonitoringJob(auth: AuthContext, opts?: { competitorId?
         changes += 1;
         if (offer.productId) {
           const [product] = await db.select().from(products).where(eq(products.id, offer.productId)).limit(1);
-          if (product && event === "decrease" && n(product.actualSellingPrice) > nextPrice) {
+          // Our price: the selling price when set, otherwise the live price on our own shop (numedia.tn).
+          const ourPrice = product ? n(product.actualSellingPrice) || n(product.ownPriceTnd) : 0;
+          if (product && event === "decrease" && ourPrice > nextPrice) {
             await insertDedupeNotification(auth, {
               type: "price_undercut",
               title: `${source.name} a baissé ${product.name}`,
-              body: `${source.name} est maintenant à ${formatTnd(nextPrice)}${offer.isDemo ? " (relevé démo)" : ""}. Votre prix de vente : ${formatTnd(product.actualSellingPrice)}.`,
+              body: `${source.name} est maintenant à ${formatTnd(nextPrice)}${offer.isDemo ? " (relevé démo)" : ""}. Votre prix : ${formatTnd(ourPrice)}.`,
               href: `/products/${product.id}`,
               productId: product.id,
               competitorId: source.id,

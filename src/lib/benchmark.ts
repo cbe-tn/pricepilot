@@ -4,7 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { competitorOffers, competitors, products, workspaces, type Competitor, type Product } from "@/db/schema";
 import { n, round3 } from "@/lib/money";
-import { costFromProduct, recommendPrice, taxFromWorkspace } from "@/lib/pricing";
+import { costFromProduct, recommendPrice, taxFromWorkspace, UNDERCUT_TND } from "@/lib/pricing";
 import type { MatchClass } from "@/lib/matching";
 import { isSelectedCompetitor } from "@/lib/connectors";
 
@@ -38,8 +38,9 @@ export type BenchmarkRow = {
   /**
    * Competitive recommendation: 1 DT under the cheapest in-stock competitor, never below the minimum
    * margin. "floor" = the cheapest cannot be beaten profitably, so the price stops at the minimum.
+   * "nocost" = no purchase cost: 1 DT under the cheapest, but the 3 % floor cannot be checked.
    */
-  recommendation: { priceTnd: number; marginPct: number | null; kind: "beat" | "floor"; reference: number } | null;
+  recommendation: { priceTnd: number; marginPct: number | null; kind: "beat" | "floor" | "nocost"; reference: number } | null;
   /** Compatible ("adaptable") versions sold by competitors, cheapest first; never used in the comparisons above. */
   compatibles: Array<{ competitorId: string; competitorName: string; priceTnd: number; url: string | null; title: string; availability: string }>;
 };
@@ -116,10 +117,15 @@ export async function buildBenchmarkMatrix(workspaceId: string, opts?: { include
         strategy: "competitive",
       });
       const recReference = rec.market.lowestInStock ?? rec.market.lowest;
-      const recommendation =
-        recReference != null && n(p.purchasePrice) > 0
-          ? { priceTnd: rec.recommendedTtc, marginPct: margin(rec.recommendedTtc, purchaseTtc), kind: rec.policyViolation ? ("floor" as const) : ("beat" as const), reference: recReference }
-          : null;
+      const recommendation: BenchmarkRow["recommendation"] =
+        recReference == null
+          ? null
+          : n(p.purchasePrice) > 0
+            ? { priceTnd: rec.recommendedTtc, marginPct: margin(rec.recommendedTtc, purchaseTtc), kind: rec.policyViolation ? "floor" : "beat", reference: recReference }
+            : recReference <= UNDERCUT_TND
+              ? null // "1 DT under" a sub-1 DT item makes no sense
+              : // No purchase cost: still 1 DT under the cheapest, flagged because the minimum margin cannot be verified.
+                { priceTnd: round3(recReference - UNDERCUT_TND), marginPct: null, kind: "nocost", reference: recReference };
       const priced = Object.entries(cells).filter((e): e is [string, BenchmarkCell] => Boolean(e[1]) && e[1]!.availability !== "out_of_stock");
       const low = priced.sort((a, b) => a[1].priceTnd - b[1].priceTnd)[0];
       return {

@@ -33,7 +33,7 @@ export async function GET(req: Request) {
       "Notre site prix": p.ownPriceTnd != null ? n(p.ownPriceTnd) : "",
       "Prix conseillé TTC": r.recommendation?.priceTnd ?? "",
       "Marge conseillée %": pct(r.recommendation?.marginPct),
-      "Règle prix conseillé": r.recommendation ? (r.recommendation.kind === "beat" ? "1 DT sous le moins cher en stock" : "Plancher marge minimale") : "",
+      "Règle prix conseillé": r.recommendation ? (r.recommendation.kind === "beat" ? "1 DT sous le moins cher en stock" : r.recommendation.kind === "nocost" ? "1 DT sous le moins cher — marge non vérifiée (coût inconnu)" : "Plancher marge minimale") : "",
     };
     for (const c of competitors) {
       const cell = r.cells[c.id];

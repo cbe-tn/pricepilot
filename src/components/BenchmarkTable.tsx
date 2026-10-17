@@ -50,11 +50,17 @@ function OwnStatus({ r, compact }: { r: BenchmarkRow; compact?: boolean }) {
 function Recommendation({ r }: { r: BenchmarkRow }) {
   const rec = r.recommendation;
   if (!rec) return <span className="text-[#c3d0d3]">—</span>;
+  const title =
+    rec.kind === "beat"
+      ? `1 DT sous le moins cher en stock (${formatTnd(rec.reference)}), marge minimale de 3 % respectée`
+      : rec.kind === "floor"
+        ? `Impossible de battre ${formatTnd(rec.reference)} avec la marge minimale : prix plancher (3 %)`
+        : `1 DT sous le moins cher (${formatTnd(rec.reference)}). Coût d'achat inconnu : la marge minimale de 3 % ne peut pas être vérifiée — importez le prix d'achat pour l'appliquer.`;
   return (
-    <div className="leading-tight" title={rec.kind === "beat" ? `1 DT sous le moins cher en stock (${formatTnd(rec.reference)})` : `Impossible de battre ${formatTnd(rec.reference)} avec la marge minimale : prix plancher`}>
+    <div className="leading-tight" title={title}>
       <span className="font-bold tabular-nums">{priceText(rec.priceTnd)}</span>
       <div className={`text-[10px] ${rec.kind === "beat" ? "text-[#0c6b4d]" : "text-[#8a6100]"}`}>
-        {pctText(rec.marginPct)} · {rec.kind === "beat" ? "−1 DT" : "plancher"}
+        {rec.kind === "nocost" ? "−1 DT · marge non vérifiée" : `${pctText(rec.marginPct)} · ${rec.kind === "beat" ? "−1 DT" : "plancher"}`}
       </div>
     </div>
   );
@@ -79,7 +85,8 @@ function OfferRanking({ r, comps, ownShop }: { r: BenchmarkRow; comps: Competito
         <span>Achat TTC {formatTnd(r.purchaseTtc)}</span>
         {r.recommendation ? (
           <span className="rounded bg-[#0b4a56] px-2 py-0.5 font-semibold text-white">
-            Prix conseillé {formatTnd(r.recommendation.priceTnd)} · marge {pctText(r.recommendation.marginPct)}
+            Prix conseillé {formatTnd(r.recommendation.priceTnd)} ·{" "}
+            {r.recommendation.kind === "nocost" ? "marge non vérifiée (coût d'achat inconnu)" : `marge ${pctText(r.recommendation.marginPct)}`}
             {r.recommendation.kind === "floor" ? " (plancher)" : ""}
           </span>
         ) : null}

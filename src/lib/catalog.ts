@@ -579,7 +579,11 @@ export async function autoMatchProduct(
   // A real competitor rarely sells far below our own purchase cost; such hits are usually the wrong product.
   const costTtc = n(product.purchasePrice) * (n(product.exchangeRate) || 1) * (1 + n(product.vatRate));
   // Likewise nobody resells at 3× our cost: that is usually a bundle or a bigger variant.
-  const plausiblePrice = (price: number) => !(costTtc > 0) || (price >= costTtc * 0.5 && price <= costTtc * 3);
+  // Without a purchase cost, our own shop's price is the reference (same product ≈ same price range);
+  // with neither, a match is not trusted (a pencil at 3 DT must never stand for a printer).
+  const ownPrice = n(product.ownPriceTnd);
+  const plausiblePrice = (price: number) =>
+    costTtc > 0 ? price >= costTtc * 0.5 && price <= costTtc * 3 : ownPrice > 0 ? price >= ownPrice * 0.5 && price <= ownPrice * 2 : false;
 
   // Only search competitors this product has no accepted offer from yet (tracked offers are refreshed
   // by monitoring). A page the user rejected is never proposed again for this product, but the
@@ -608,7 +612,7 @@ export async function autoMatchProduct(
       if (c.compatible) {
         // Compatible version of the reference: kept apart (cheapest per competitor), never as the original.
         const prev = compatibles.get(c.competitorId);
-        const sane = !(costTtc > 0) || c.priceTnd <= costTtc * 3;
+        const sane = costTtc > 0 ? c.priceTnd <= costTtc * 3 : ownPrice > 0 ? c.priceTnd <= ownPrice * 2 && c.priceTnd >= ownPrice * 0.1 : false;
         if (c.referenceOnPage && sane && !compatibleFrom.has(c.competitorId) && !c.alreadyTracked && (!prev || c.priceTnd < prev.priceTnd!)) compatibles.set(c.competitorId, c);
         continue;
       }

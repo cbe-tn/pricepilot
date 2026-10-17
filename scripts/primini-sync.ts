@@ -220,6 +220,9 @@ for (const [i, p] of list.entries()) {
     const compatible = isCompatibleListing(s.title, p.name);
     // Same plausibility guard as the direct search: far below or above our cost is another product.
     if (costTtc > 0 && (s.priceTnd > costTtc * 3 || (!compatible && s.priceTnd < costTtc * 0.5))) continue;
+    // No purchase cost: our numedia.tn price is the reference; with neither, do not trust the match.
+    const ownRef = n(p.ownPriceTnd);
+    if (!(costTtc > 0) && (!(ownRef > 0) || s.priceTnd > ownRef * 2 || (!compatible && s.priceTnd < ownRef * 0.5))) continue;
     const existing = await db.select().from(competitorOffers).where(and(eq(competitorOffers.productId, p.id), eq(competitorOffers.competitorId, shop.id)));
     if (existing.some((o) => isSellerProductUrl(o.url, shop) && !o.matchReason?.includes("via Primini") && !o.isCompatible && o.userReview !== "reject") && !compatible) {
       totals.skippedDirect += 1;

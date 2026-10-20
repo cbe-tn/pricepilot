@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { getAuth } from "@/lib/auth";
+import { getAuth, isPurchasingOnly } from "@/lib/auth";
 import { buildBenchmarkMatrix } from "@/lib/benchmark";
 import { fr } from "@/lib/labels";
 
@@ -11,7 +11,7 @@ const pct = (v: number | null) => (v == null ? "" : Math.round(v * 1000) / 10);
 // purchase price, our price/margin, then price + margin % per competitor.
 export async function GET(req: Request) {
   const auth = await getAuth();
-  if (!auth) return new Response("Non autorisé", { status: 401 });
+  if (!auth || isPurchasingOnly(auth.user.role)) return new Response("Non autorisé", { status: 401 });
   const includeDemo = new URL(req.url).searchParams.get("demo") === "1";
   const { competitors, rows } = await buildBenchmarkMatrix(auth.workspace.id, { includeDemo });
 

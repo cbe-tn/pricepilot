@@ -7,7 +7,7 @@ import { requirePageAuth } from "@/lib/page-auth";
 export const dynamic = "force-dynamic";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const auth = await requirePageAuth();
+  const auth = await requirePageAuth({ allowPurchasing: true });
   const unreadRows = await db
     .select({ c: sql<number>`count(*)` })
     .from(notifications)

@@ -830,6 +830,7 @@ export function InviteForm() {
         <Select name="role" defaultValue="staff">
           <option value="staff">Collaborateur</option>
           <option value="administrator">Administrateur</option>
+          <option value="purchasing">Acheteur (comparateur fournisseurs uniquement)</option>
         </Select>
       </Field>
       <Field label="Mot de passe provisoire" hint="Au moins 8 caractères.">

@@ -6,7 +6,7 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { marketingAssets, marketingCampaigns, products } from "@/db/schema";
-import { getAuth, writeAudit } from "@/lib/auth";
+import { PURCHASING_PATH, getAuth, isPurchasingOnly, writeAudit } from "@/lib/auth";
 import { loadPosterProducts, officialPhotoUrl } from "@/lib/marketing";
 import { defaultSceneQuery, TN_EVENTS } from "@/lib/events";
 import { AI_SCENES_PER_DAY, AMBIANCES, aiScenesConfigured, buildScenePrompt, generateSceneImage } from "@/lib/ai-scenes";
@@ -18,6 +18,7 @@ const MAX_VERSIONS = 15;
 async function mustAuth() {
   const auth = await getAuth();
   if (!auth) redirect("/login");
+  if (isPurchasingOnly(auth.user.role)) redirect(PURCHASING_PATH);
   return auth;
 }
 

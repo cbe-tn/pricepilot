@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { marketingAssets, products } from "@/db/schema";
-import { getAuth } from "@/lib/auth";
+import { getAuth, isPurchasingOnly } from "@/lib/auth";
 import { USER_AGENT } from "@/lib/extract";
 import { officialPhotoUrl } from "@/lib/marketing";
 import { STOCK_SCENE_URL } from "@/lib/scenes";
@@ -35,7 +35,7 @@ function isPublicHttpUrl(raw: string): boolean {
  */
 export async function GET(req: Request) {
   const auth = await getAuth();
-  if (!auth) return new Response("Non autorisé", { status: 401 });
+  if (!auth || isPurchasingOnly(auth.user.role)) return new Response("Non autorisé", { status: 401 });
   const params = new URL(req.url).searchParams;
   const assetId = params.get("asset");
   if (assetId) {

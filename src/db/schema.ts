@@ -12,7 +12,8 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-export const userRoleEnum = pgEnum("user_role", ["owner", "administrator", "staff"]);
+// "purchasing" (Acheteur): only imports supplier price lists and compares suppliers.
+export const userRoleEnum = pgEnum("user_role", ["owner", "administrator", "staff", "purchasing"]);
 export const stockStatusEnum = pgEnum("stock_status", [
   "in_stock",
   "low_stock",
@@ -475,6 +476,27 @@ export const suppliers = pgTable("suppliers", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// One supplier price list (PDF, Word, Excel or CSV) uploaded on the purchasing page.
+export const supplierPriceImports = pgTable(
+  "supplier_price_imports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    supplierId: uuid("supplier_id")
+      .notNull()
+      .references(() => suppliers.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    /** Basis of the prices as written in the file; quotes are always stored HT. */
+    priceBasis: text("price_basis").default("ht").notNull(),
+    rowCount: integer("row_count").default(0).notNull(),
+    uploadedBy: uuid("uploaded_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("supplier_imports_workspace_idx").on(t.workspaceId)],
+);
+
 export const supplierQuotes = pgTable("supplier_quotes", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id")
@@ -494,6 +516,8 @@ export const supplierQuotes = pgTable("supplier_quotes", {
   availability: text("availability").default("in_stock"),
   quotedAt: timestamp("quoted_at", { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }),
+  /** Price list the quote was read from (null = entered by hand). Deleting the import removes its quotes. */
+  importId: uuid("import_id").references(() => supplierPriceImports.id, { onDelete: "cascade" }),
 });
 
 export const stockMovements = pgTable(
@@ -651,6 +675,7 @@ export type PriceObservation = typeof priceObservations.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type Supplier = typeof suppliers.$inferSelect;
 export type SupplierQuote = typeof supplierQuotes.$inferSelect;
+export type SupplierPriceImport = typeof supplierPriceImports.$inferSelect;
 export type DiscoveredListing = typeof discoveredListings.$inferSelect;
 export type MonitoringJob = typeof monitoringJobs.$inferSelect;
 export type StockMovement = typeof stockMovements.$inferSelect;

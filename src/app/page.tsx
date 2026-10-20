@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { getAuth } from "@/lib/auth";
+import { PURCHASING_PATH, getAuth, isPurchasingOnly } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function LandingPage() {
   const auth = await getAuth();
-  if (auth) redirect("/dashboard");
+  if (auth) redirect(isPurchasingOnly(auth.user.role) ? PURCHASING_PATH : "/dashboard");
 
   return (
     <div className="min-h-screen bg-[#071c22] text-white">

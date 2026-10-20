@@ -23,6 +23,8 @@ import {
   LogOut,
   Menu,
   Megaphone,
+  FileSpreadsheet,
+  ArrowLeftRight,
 } from "lucide-react";
 import { logoutAction, searchProductsAction } from "@/lib/actions";
 import { cn } from "@/components/ui";
@@ -32,6 +34,7 @@ const NAV = [
   { href: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
   { href: "/products", label: "Catalogue produits", icon: Package },
   { href: "/benchmarking", label: "Benchmark des prix", icon: Scale },
+  { href: "/equivalents", label: "Produits équivalents", icon: ArrowLeftRight },
   { href: "/stock-web", label: "Stock & site web", icon: Store },
   { href: "/marketing", label: "AI Marketing Studio", icon: Megaphone },
   { href: "/competitors", label: "Concurrents", icon: Globe },
@@ -39,11 +42,15 @@ const NAV = [
   { href: "/history", label: "Historique des prix", icon: LineChart },
   { href: "/recommendations", label: "Recommandations", icon: Lightbulb },
   { href: "/suppliers", label: "Fournisseurs", icon: Truck },
+  { href: "/purchasing", label: "Comparateur fournisseurs", icon: FileSpreadsheet },
   { href: "/inventory", label: "Stock", icon: Warehouse },
   { href: "/reports", label: "Rapports", icon: FileBarChart },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/settings", label: "Paramètres", icon: Settings },
 ];
+
+// Acheteur accounts only see the supplier comparison.
+const PURCHASING_NAV = NAV.filter((n) => n.href === "/purchasing");
 
 const CRUMB_LABELS: Record<string, string> = { new: "Nouveau", edit: "Modifier", assistant: "Assistant", onboarding: "Démarrage", print: "Impression" };
 
@@ -64,6 +71,8 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const purchasingOnly = user.role === "purchasing";
+  const nav = purchasingOnly ? PURCHASING_NAV : NAV;
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -115,7 +124,7 @@ export function AppShell({
         ) : null}
       </div>
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
-        {NAV.map((item) => {
+        {nav.map((item) => {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
           return (
@@ -180,7 +189,7 @@ export function AppShell({
             <Menu size={18} />
           </button>
           <nav className="hidden min-w-0 items-center gap-1 text-xs text-[#6b858c] sm:flex">
-            <Link href="/dashboard" className="hover:text-[#0b4a56]">
+            <Link href={purchasingOnly ? "/purchasing" : "/dashboard"} className="hover:text-[#0b4a56]">
               Accueil
             </Link>
             {crumbs.map((c) => (
@@ -192,27 +201,37 @@ export function AppShell({
               </span>
             ))}
           </nav>
-          <GlobalSearch />
-          <Link href="/assistant" className="hidden items-center gap-2 rounded-lg border border-[#d7e3e6] px-3 py-2 text-sm text-[#0b4a56] hover:bg-[#f4f8f9] sm:inline-flex">
-            <Bot size={16} /> Assistant
-          </Link>
-          <Link href="/notifications" className="relative rounded-lg p-2 hover:bg-[#eef3f5]" aria-label="Notifications">
-            <Bell size={18} />
-            {unread > 0 ? <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[#d4a017]" /> : null}
-          </Link>
-          <Link href="/settings" className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 hover:bg-[#eef3f5]">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0b4a56] text-xs font-semibold text-white">
-              {user.fullName
-                .split(" ")
-                .map((p) => p[0])
-                .slice(0, 2)
-                .join("")}
-            </span>
+          {purchasingOnly ? <div className="flex-1" /> : <GlobalSearch />}
+          {purchasingOnly ? null : (
+            <>
+              <Link href="/assistant" className="hidden items-center gap-2 rounded-lg border border-[#d7e3e6] px-3 py-2 text-sm text-[#0b4a56] hover:bg-[#f4f8f9] sm:inline-flex">
+                <Bot size={16} /> Assistant
+              </Link>
+              <Link href="/notifications" className="relative rounded-lg p-2 hover:bg-[#eef3f5]" aria-label="Notifications">
+                <Bell size={18} />
+                {unread > 0 ? <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[#d4a017]" /> : null}
+              </Link>
+              <Link href="/settings" className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 hover:bg-[#eef3f5]">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0b4a56] text-xs font-semibold text-white">
+                  {user.fullName
+                    .split(" ")
+                    .map((p) => p[0])
+                    .slice(0, 2)
+                    .join("")}
+                </span>
+                <span className="hidden leading-tight lg:block">
+                  <span className="block text-sm font-medium text-[#071c22]">{user.fullName}</span>
+                  <span className="block text-[11px] capitalize text-[#6b858c]">{fr(user.role)}</span>
+                </span>
+              </Link>
+            </>
+          )}
+          {purchasingOnly ? (
             <span className="hidden leading-tight lg:block">
               <span className="block text-sm font-medium text-[#071c22]">{user.fullName}</span>
-              <span className="block text-[11px] capitalize text-[#6b858c]">{fr(user.role)}</span>
+              <span className="block text-[11px] text-[#6b858c]">{fr(user.role)}</span>
             </span>
-          </Link>
+          ) : null}
         </header>
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </div>

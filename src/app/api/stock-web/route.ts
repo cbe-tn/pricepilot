@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { getAuth } from "@/lib/auth";
+import { getAuth, isPurchasingOnly } from "@/lib/auth";
 import { buildBenchmarkMatrix } from "@/lib/benchmark";
 import { fr } from "@/lib/labels";
 import { n } from "@/lib/money";
@@ -13,7 +13,7 @@ const OWN_STATUS: Record<string, string> = { found: "En ligne", review: "À vér
 // with the link to its article.
 export async function GET(req: Request) {
   const auth = await getAuth();
-  if (!auth) return new Response("Non autorisé", { status: 401 });
+  if (!auth || isPurchasingOnly(auth.user.role)) return new Response("Non autorisé", { status: 401 });
   const all = new URL(req.url).searchParams.get("tous") === "1";
   const { competitors, rows } = await buildBenchmarkMatrix(auth.workspace.id);
   const list = rows.filter((r) => all || r.product.stockQty > 0);

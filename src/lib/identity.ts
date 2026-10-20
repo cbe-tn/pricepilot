@@ -32,7 +32,7 @@ const MODEL_STOP_RE = /^(en|de|du|avec|pour|et|a|à|noir|blanc|gris|rouge|bleu|s
 const CONSUMABLE_RE = /^\s*(toner|cartouches?|encres?|bouteilles?|tambour|drum|ruban|t[eê]te d'impression|kit de maintenance)\b/i;
 
 /** A token that looks like a manufacturer reference: letters and digits mixed, at least 4 characters. */
-function isRefToken(t: string): boolean {
+export function isRefToken(t: string): boolean {
   const s = t.replace(/[.,;:]+$/, "");
   if (s.length < 4 || s.length > 25) return false;
   if (SPEC_RE.test(s)) return false;

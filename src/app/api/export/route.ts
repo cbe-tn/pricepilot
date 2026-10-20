@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { products } from "@/db/schema";
-import { getAuth } from "@/lib/auth";
+import { getAuth, isPurchasingOnly } from "@/lib/auth";
 import { productsToWorkbook, toCsv } from "@/lib/csv";
 import { n } from "@/lib/money";
 
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const auth = await getAuth();
-  if (!auth) return new Response("Non autorisé", { status: 401 });
+  if (!auth || isPurchasingOnly(auth.user.role)) return new Response("Non autorisé", { status: 401 });
   const url = new URL(req.url);
   const format = url.searchParams.get("format") ?? "csv";
   const rows = await db.select().from(products).where(and(eq(products.workspaceId, auth.workspace.id), isNull(products.archivedAt)));

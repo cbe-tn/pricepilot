@@ -2,7 +2,7 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "@/db";
 import { competitorOffers, competitors, discoveredListings, priceObservations, products, supplierQuotes, suppliers } from "@/db/schema";
-import { getAuth } from "@/lib/auth";
+import { getAuth, isPurchasingOnly } from "@/lib/auth";
 import { toCsv } from "@/lib/csv";
 import { n } from "@/lib/money";
 import { costFromProduct, recommendPrice, taxFromWorkspace } from "@/lib/pricing";
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const auth = await getAuth();
-  if (!auth) return new Response("Non autorisé", { status: 401 });
+  if (!auth || isPurchasingOnly(auth.user.role)) return new Response("Non autorisé", { status: 401 });
   const url = new URL(req.url);
   const type = url.searchParams.get("type") ?? "profitability";
   const format = url.searchParams.get("format") ?? "csv";

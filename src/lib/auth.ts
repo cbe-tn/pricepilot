@@ -83,11 +83,9 @@ export async function getAuth(): Promise<AuthContext | null> {
   if (!row || !row.users.isActive) return null;
   let settings = row.user_settings;
   if (!settings) {
-    const created = await db
-      .insert(userSettings)
-      .values({ userId: row.users.id })
-      .returning();
-    settings = created[0];
+    // Concurrent first requests (layout + page) may both get here: the loser reads the winner's row.
+    const created = await db.insert(userSettings).values({ userId: row.users.id }).onConflictDoNothing().returning();
+    settings = created[0] ?? (await db.select().from(userSettings).where(eq(userSettings.userId, row.users.id)).limit(1))[0];
   }
   return { user: row.users, workspace: row.workspaces, settings };
 }
@@ -102,6 +100,14 @@ export async function requireAuth(): Promise<AuthContext> {
 
 export function canManageWorkspace(role: User["role"]): boolean {
   return role === "owner" || role === "administrator";
+}
+
+/** Home of the "Acheteur" role, the only page it may open. */
+export const PURCHASING_PATH = "/purchasing";
+
+/** Acheteur accounts only import supplier price lists and compare suppliers. */
+export function isPurchasingOnly(role: User["role"]): boolean {
+  return role === "purchasing";
 }
 
 export async function writeAudit(

@@ -61,6 +61,7 @@ const LABELS: Record<string, string> = {
   owner: "Propriétaire",
   administrator: "Administrateur",
   staff: "Collaborateur",
+  purchasing: "Acheteur",
   // déclencheurs
   manual: "Manuel",
   scheduled: "Planifié",

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getAuth } from "@/lib/auth";
+import { PURCHASING_PATH, getAuth, isPurchasingOnly } from "@/lib/auth";
 import { RegisterForm } from "@/components/ClientWidgets";
 import { AuthFrame } from "@/components/AuthFrame";
 
@@ -9,7 +9,7 @@ export const metadata = { title: "Créer un espace" };
 
 export default async function RegisterPage() {
   const auth = await getAuth();
-  if (auth) redirect("/dashboard");
+  if (auth) redirect(isPurchasingOnly(auth.user.role) ? PURCHASING_PATH : "/dashboard");
   return (
     <AuthFrame title="Créez votre espace" subtitle="Compte propriétaire · devise par défaut : dinar (TND)">
       <RegisterForm />

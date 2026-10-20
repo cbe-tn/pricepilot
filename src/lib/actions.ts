@@ -27,6 +27,8 @@ import {
   destroySession,
   getAuth,
   hashPassword,
+  isPurchasingOnly,
+  PURCHASING_PATH,
   rateLimitLogin,
   verifyPassword,
   writeAudit,
@@ -48,6 +50,7 @@ import { pricingRecommendations } from "@/db/schema";
 async function mustAuth() {
   const auth = await getAuth();
   if (!auth) redirect("/login");
+  if (isPurchasingOnly(auth.user.role)) redirect(PURCHASING_PATH);
   return auth;
 }
 
@@ -74,6 +77,7 @@ export async function loginAction(_prev: unknown, formData: FormData) {
   await createSession(user.id);
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
   const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, user.workspaceId)).limit(1);
+  if (isPurchasingOnly(user.role)) redirect(PURCHASING_PATH);
   redirect(ws && !ws.onboardingCompleted ? "/onboarding" : "/dashboard");
 }
 
@@ -222,7 +226,8 @@ export async function inviteStaffAction(formData: FormData) {
   if (!canManageWorkspace(auth.user.role)) return { error: "Seuls le propriétaire et les administrateurs peuvent ajouter des membres." };
   const email = str(formData, "email").toLowerCase();
   const fullName = str(formData, "fullName");
-  const role = str(formData, "role") as "administrator" | "staff";
+  const requested = str(formData, "role");
+  const role = requested === "administrator" || requested === "purchasing" ? requested : "staff";
   const password = String(formData.get("password") ?? "Staff1234!");
   if (!email || !fullName) return { error: "Le nom et l'e-mail sont obligatoires." };
   const exists = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
@@ -233,7 +238,7 @@ export async function inviteStaffAction(formData: FormData) {
       workspaceId: auth.workspace.id,
       email,
       fullName,
-      role: role === "administrator" ? "administrator" : "staff",
+      role,
       passwordHash: await hashPassword(password),
     })
     .returning();
@@ -917,7 +922,7 @@ export async function completeOnboardingAction(formData: FormData) {
 
 export async function searchProductsAction(query: string) {
   const auth = await getAuth();
-  if (!auth) return [];
+  if (!auth || isPurchasingOnly(auth.user.role)) return [];
   const q = `%${query}%`;
   const rows = await db
     .select({ id: products.id, name: products.name, sku: products.sku, brand: products.brand })

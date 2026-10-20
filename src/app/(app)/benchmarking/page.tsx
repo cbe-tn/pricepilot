@@ -11,17 +11,19 @@ import { buildBenchmarkMatrix } from "@/lib/benchmark";
 import { BenchmarkTable, benchmarkLegend, coverageOf as coverage } from "@/components/BenchmarkTable";
 import { fr } from "@/lib/labels";
 import { isSelectedCompetitor } from "@/lib/connectors";
+import { isExclusive, isUnverifiedExclusive } from "@/lib/exclusives";
 
 export const metadata = { title: "Benchmark des prix" };
 
 export default async function BenchmarkingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sort?: string; q?: string; vide?: string }>;
+  searchParams: Promise<{ sort?: string; q?: string; vide?: string; vue?: string }>;
 }) {
   const auth = await requirePageAuth();
-  const { sort = "cheap", q = "", vide } = await searchParams;
-  const hideEmpty = vide === "0";
+  const { sort = "cheap", q = "", vide, vue: vueParam } = await searchParams;
+  // "concurrents" = only products a competitor sells · "exclusifs" = products only we sell.
+  const vue = vueParam ?? (vide === "0" ? "concurrents" : "");
   const query = q.trim().toLowerCase();
   const catalog = await db.select().from(products).where(and(eq(products.workspaceId, auth.workspace.id), isNull(products.archivedAt)));
   const comps = (await db.select().from(competitors).where(eq(competitors.workspaceId, auth.workspace.id))).filter((c) => !c.isOwnShop && isSelectedCompetitor(c));
@@ -37,9 +39,12 @@ export default async function BenchmarkingPage({
   const matchesQuery = (p: { name: string; manufacturerRef: string | null; model: string | null; brand: string | null; category: string | null }) =>
     !query || [p.name, p.manufacturerRef, p.model, p.brand, p.category].some((v) => v?.toLowerCase().includes(query));
   const matrixRows = matrix.rows
-    .filter((r) => matchesQuery(r.product) && (!hideEmpty || coverage(r) > 0))
+    .filter((r) => matchesQuery(r.product) && (vue === "concurrents" ? coverage(r) > 0 : vue === "exclusifs" ? isExclusive(r) : true))
     .sort((a, b) => coverage(b) - coverage(a));
   const pricedCount = matrix.rows.filter((r) => coverage(r) > 0).length;
+  const exclusiveCount = matrix.rows.filter(isExclusive).length;
+  const unsearchedCount = matrix.rows.filter((r) => r.product.ownStatus === "found" && !r.product.lastMatchedAt).length;
+  const unverifiedCount = matrix.rows.filter(isUnverifiedExclusive).length;
 
   const rows = offers.filter((o) => catalog.some((x) => x.id === o.productId && matchesQuery(x))).map((o) => {
     const p = catalog.find((x) => x.id === o.productId);
@@ -84,10 +89,11 @@ export default async function BenchmarkingPage({
               placeholder="Réf, désignation, marque…"
               className="h-10 w-56 rounded-lg border border-[#d7e3e6] px-3 text-sm"
             />
-            <label className="flex h-10 items-center gap-2 rounded-lg border border-[#d7e3e6] bg-white px-3 text-sm">
-              <input type="checkbox" name="vide" value="0" defaultChecked={hideEmpty} />
-              Masquer sans concurrent
-            </label>
+            <select name="vue" defaultValue={vue} className="h-10 rounded-lg border border-[#d7e3e6] px-3 text-sm" title="Produits affichés dans la matrice">
+              <option value="">Tous les produits</option>
+              <option value="concurrents">Vendus par un concurrent</option>
+              <option value="exclusifs">Exclusifs numedia.tn (aucun concurrent)</option>
+            </select>
             <select name="sort" defaultValue={sort} className="h-10 rounded-lg border border-[#d7e3e6] px-3 text-sm" title="Tri de la liste des offres">
               <option value="cheap">Offre la moins chère</option>
               <option value="expensive">La plus chère</option>
@@ -105,15 +111,23 @@ export default async function BenchmarkingPage({
               <h2 className="font-semibold">Matrice de benchmark</h2>
               <p className="text-xs text-[#6b858c]">{benchmarkLegend}</p>
             </div>
-            <a href="/api/benchmark" className="h-10 rounded-lg bg-[#0b4a56] px-4 text-sm leading-10 text-white">
-              Exporter Excel
-            </a>
+            <div className="flex gap-2">
+              <a href="/api/benchmark?vue=exclusifs" className="h-10 rounded-lg border border-[#0b4a56] px-4 text-sm leading-10 text-[#0b4a56]" title="Produits en ligne sur notre site que les concurrents suivis ne vendent pas">
+                Exporter exclusifs ({exclusiveCount.toLocaleString("fr-FR")})
+              </a>
+              <a href="/api/benchmark" className="h-10 rounded-lg bg-[#0b4a56] px-4 text-sm leading-10 text-white">
+                Exporter Excel
+              </a>
+            </div>
           </div>
           <ScrollPanel
             toolbar={
               <span className="text-xs text-[#4d6a72]">
                 <strong>{matrixRows.length.toLocaleString("fr-FR")}</strong> produits affichés · {pricedCount.toLocaleString("fr-FR")} avec au moins un prix
                 concurrent
+                {" "}· {exclusiveCount.toLocaleString("fr-FR")} exclusifs numedia.tn
+                {vue === "exclusifs" && unverifiedCount ? <> · {unverifiedCount.toLocaleString("fr-FR")} sans référence non trouvés ailleurs (à vérifier, dans l&apos;export)</> : null}
+                {vue === "exclusifs" && unsearchedCount ? <> · {unsearchedCount.toLocaleString("fr-FR")} pas encore recherchés chez les concurrents</> : null}
                 {query ? <> · recherche « {q} »</> : null}
               </span>
             }

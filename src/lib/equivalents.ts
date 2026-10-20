@@ -32,8 +32,10 @@ const TYPES: Array<[string, RegExp]> = [
   ["Tablette", / (tablette|ipad|galaxy tab|tab [as]\d*) /],
   ["Montre connectée", / (montre|smartwatch|watch) /],
   ["Imprimante", / (imprimante|multifonctions?|photocopieu[rs]e?|copieur|traceur|printer|ecotank|pixma|maxify|laserjet|deskjet|officejet|smart tank) /],
+  // Before laptops: an "HP Pavilion all in one" is a desktop although Pavilion is also a laptop series.
+  ["PC de bureau", / (pc de bureau|pc bureau|unite centrale|all in one|aio|mini pc|desktop|imac|mac mini) /],
   ["PC portable", / (pc portable|ordinateur portable|laptop|notebook|ultrabook|macbook|ideapad|vivobook|zenbook|thinkpad|probook|elitebook|pavilion|aspire|inspiron|latitude|victus|tuf gaming) /],
-  ["PC de bureau", / (pc de bureau|pc bureau|unite centrale|all in one|aio|mini pc|desktop|imac|mac mini|tour) /],
+  ["PC de bureau", / tour /],
   ["Écran", / (ecran|moniteur|monitor) /],
   ["Téléviseur", / (tv|televiseur|television|smart tv|led tv) /],
   ["Vidéoprojecteur", / (videoprojecteur|video projecteur|projecteur) /],
@@ -62,7 +64,7 @@ const NAMED: Array<[RegExp, string, string, number]> = [
   [/ (ethernet|reseau|lan) /, "ethernet", "Réseau / Ethernet", 1.5],
   [/ (reservoir|ecotank|ink ?tank|megatank|smart tank) /, "reservoir", "Réservoir d'encre", 3],
   [/ laser /, "laser", "Laser", 3],
-  [/ (jet d encre|inkjet) /, "jet", "Jet d'encre", 3],
+  [/ (jet d ?encre|inkjet) /, "jet", "Jet d'encre", 3],
   [/ (couleur|color|colour) /, "couleur", "Couleur", 2],
   [/ (monochrome|mono|noir et blanc|n\/b) /, "mono", "Monochrome", 2],
   [/ (recto ?verso|recto\/verso|duplex) /, "duplex", "Recto-verso", 1.5],
@@ -82,9 +84,15 @@ const NAMED: Array<[RegExp, string, string, number]> = [
   [/ (adaptable|compatible) /, "compatible", "Adaptable", 0.5],
 ];
 
-const STOP = new Set(
-  "de du des la le les un une et en avec pour sans par sur au aux a noir blanc gris silver black white bk new nouveau original origine garantie an ans tunisie prix promo pc ordinateur produit".split(" "),
-);
+// Colours never make a product equivalent or not.
+const COLOURS = "noir noire blanc blanche gris grise silver black white bk vert verte bleu bleue rouge rose violet jaune orange dore doree gold argent bronze beige marron".split(" ");
+
+const STOP = new Set([
+  ..."de du des la le les un une et en avec pour sans par sur au aux a new nouveau original origine garantie an ans tunisie prix promo pc ordinateur produit".split(" "),
+  ...COLOURS,
+  // Range words ("milieu de gamme") are read as a price band, not as characteristics.
+  ..."gamme milieu moyen entree bas haut".split(" "),
+]);
 
 /** Characteristics of a title: named features, capacities/specs and remaining series words (low weight). */
 export function features(title: string): Feature[] {
@@ -95,7 +103,8 @@ export function features(title: string): Feature[] {
   const fn = t.match(/ ([2-6]) ?en ?1 /);
   if (fn) add({ key: `${fn[1]}en1`, label: `${fn[1]} en 1`, weight: 2 });
   else if (/ multifonctions? | mfp /.test(t)) add({ key: "3en1", label: "Multifonction", weight: 2 });
-  const cpu = t.match(/ (?:core )?(i[3579]|ultra [579]|ryzen ?[3579]|celeron|pentium|m[1-5](?: pro| max)?) /);
+  // "i7-1355U", "/i5-9300H": the processor is often glued to its model number.
+  const cpu = t.replace(/[/-]/g, " ").match(/ (?:core )?(i[3579]|ultra [579]|ryzen ?[3579]|celeron|pentium|m[1-5](?: pro| max)?) /);
   if (cpu) add({ key: `cpu:${cpu[1].replace(/\s/g, "")}`, label: cpu[1].toUpperCase().replace("RYZEN", "Ryzen "), weight: 2.5 });
   const ram = t.match(/ (\d{1,3}) ?(?:go|gb) ?(?:de )?(?:ram|ddr\d?|memoire) /) ?? t.match(/ (?:ram|memoire) ?(\d{1,3}) ?(?:go|gb) /);
   if (ram) add({ key: `ram:${ram[1]}`, label: `${ram[1]} Go RAM`, weight: 2 });
@@ -140,6 +149,8 @@ export function features(title: string): Feature[] {
 
 export type TargetSource = { kind: "catalogue" | "fournisseur" | "concurrent" | "index"; label: string; title: string; priceTtc: number | null; url?: string | null };
 
+export type PriceBand = { label: string; lo: number; hi: number };
+
 export type Target = {
   query: string;
   title: string;
@@ -147,6 +158,8 @@ export type Target = {
   type: string | null;
   category: string | null;
   priceTtc: number | null;
+  /** From "entrée / milieu / haut de gamme" when no price is known: a third of our prices for that type. */
+  priceBand: PriceBand | null;
   refKey: string;
   features: Feature[];
   sources: TargetSource[];
@@ -161,13 +174,155 @@ function productKeys(p: Product): string[] {
   return keys.filter((k) => k.length >= 4);
 }
 
+// ---------- free description ("xiaomi redmi note 10 smartphone android milieu de gamme 64 go vert") ----------
+
+const TIERS: Array<[RegExp, string, number]> = [
+  [/ (entree|bas) de gamme | (pas cher|petit prix|economique) /, "Entrée de gamme", 0],
+  [/ (milieu|moyen) de gamme /, "Milieu de gamme", 1],
+  [/ haut de gamme | (premium|flagship) /, "Haut de gamme", 2],
+];
+
+/** Words that describe a kind of product, not a specific model. */
+const GENERIC = new Set(
+  ("smartphone telephone portable mobile android ios dual sim tablette montre connectee imprimante multifonction multifonctions laser jet encre couleur " +
+    "monochrome wifi ecran moniteur tv televiseur smart pc ordinateur laptop notebook bureau gamer gaming tactile reservoir go gb to tb ram ssd hdd stockage " +
+    "memoire processeur intel amd core i3 i5 i7 i9 ryzen celeron pentium pouces pouce inch hz gen generation casque souris clavier sans fil bluetooth " +
+    "refrigerateur congelateur machine laver climatiseur onduleur camera routeur disque dur cle usb")
+    .split(" "),
+);
+
+/** Variant words: a "Note 10 Pro" or a "Note 10 5G" is another product than a "Note 10". */
+const VARIANTS = new Set("pro plus max ultra lite mini se fe neo prime 5g 4g".split(" "));
+
+const tokens = (text: string) =>
+  plain(text)
+    .replace(/ \d+(?:[.,]\d+)? ?(?:go|gb|to|tb|"|pouces?|inch|hz|w|l|kg|va|mp|mpx)(?= )/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+
+/** Brand and model words of a description; empty for a generic request such as "imprimante laser couleur wifi". */
+function modelTokens(text: string): string[] {
+  let t = plain(text);
+  for (const [re] of TIERS) t = t.replace(re, " ");
+  const words = tokens(t).filter((w) => !STOP.has(w) && !GENERIC.has(w) && !/^\d+[.,]\d+$/.test(w));
+  return words.length >= 2 || words.some(isRefToken) ? words : [];
+}
+
+/** The described product itself: every model word, the same variant, and no different capacity. */
+function isSameProduct(title: string, model: string[], spec: Feature[]): boolean {
+  const words = new Set(tokens(title));
+  if (!model.every((w) => words.has(w))) return false;
+  if ([...words].some((w) => VARIANTS.has(w) && !model.includes(w))) return false;
+  const own = features(title);
+  return spec.every((f) => {
+    const [kind] = f.key.split(":");
+    if (kind !== "disk" && kind !== "ram") return true;
+    const theirs = own.filter((o) => o.key.startsWith(`${kind}:`));
+    return !theirs.length || theirs.some((o) => o.key === f.key);
+  });
+}
+
+const ourPrice = (p: Product) => n(p.ownPriceTnd) || n(p.actualSellingPrice) || null;
+
+/**
+ * Can be offered to the client now: in our stock file, or shown in stock on our web shop
+ * (most of the catalogue has no stock quantity, only the website availability).
+ */
+export function isAvailable(p: Product): boolean {
+  return p.stockQty > 0 || p.ownAvailability === "in_stock";
+}
+
+function priceBandFor(text: string, type: string | null, catalog: Product[]): PriceBand | null {
+  const t = plain(text);
+  const tier = TIERS.find(([re]) => re.test(t));
+  if (!tier || !type) return null;
+  const prices = catalog
+    .filter((p) => !p.isDemo && productType(`${p.category ?? ""} ${p.name}`) === type)
+    .map(ourPrice)
+    .filter((v): v is number => !!v && v > 0)
+    .sort((a, b) => a - b);
+  if (prices.length < 6) return null;
+  const at = (q: number) => prices[Math.min(prices.length - 1, Math.floor(q * prices.length))];
+  const cuts = [prices[0], at(1 / 3), at(2 / 3), prices[prices.length - 1]];
+  return { label: tier[1], lo: cuts[tier[2]], hi: cuts[tier[2] + 1] };
+}
+
+async function resolveDescription(workspaceId: string, q: string, catalog: Product[]): Promise<Target> {
+  const type = productType(q);
+  const asked = features(q);
+  const spec = asked.filter((f) => !f.key.startsWith("w:"));
+  const model = modelTokens(q);
+  const sources: TargetSource[] = [];
+  let ours: Product[] = [];
+
+  if (model.length) {
+    ours = catalog.filter(
+      (p) => !p.isDemo && !COMPATIBLE_RE.test(p.name) && (!type || productType(`${p.category ?? ""} ${p.name}`) === type) && isSameProduct(p.name, model, spec),
+    );
+    for (const p of ours) sources.push({ kind: "catalogue", label: "Notre catalogue", title: p.name, priceTtc: ourPrice(p) });
+    const words = model.filter((w) => w.length >= 2).slice(0, 4);
+    const [quotes, offers] = await Promise.all([
+      db
+        .select({ q: supplierQuotes, supplier: suppliers.name })
+        .from(supplierQuotes)
+        .innerJoin(suppliers, eq(suppliers.id, supplierQuotes.supplierId))
+        .where(and(eq(supplierQuotes.workspaceId, workspaceId), ...words.map((w) => ilike(supplierQuotes.productName, `%${w}%`))))
+        .limit(40),
+      db
+        .select({ o: competitorOffers, competitor: competitors.name })
+        .from(competitorOffers)
+        .innerJoin(competitors, eq(competitors.id, competitorOffers.competitorId))
+        .where(and(eq(competitorOffers.workspaceId, workspaceId), eq(competitorOffers.isDemo, false), ...words.map((w) => ilike(competitorOffers.title, `%${w}%`))))
+        .limit(40),
+    ]);
+    for (const { q: quote, supplier } of quotes) {
+      const name = quote.productName ?? "";
+      if (!isSameProduct(name, model, spec)) continue;
+      const ht = n(quote.quotedPrice);
+      sources.push({ kind: "fournisseur", label: supplier, title: name, priceTtc: ht ? Math.round(ht * (1 + vatRateFor({ name })) * 1000) / 1000 : null });
+    }
+    for (const { o, competitor } of offers) {
+      if (o.userReview === "reject" || o.isCompatible || !isSameProduct(o.title, model, spec)) continue;
+      sources.push({ kind: "concurrent", label: o.sellerName || competitor, title: o.title, priceTtc: n(o.priceTnd) || null, url: o.url });
+    }
+  }
+
+  // The client's words are the request; our own listing of that very product may add specs (RAM…).
+  const merged = new Map(asked.map((f) => [f.key, f]));
+  for (const p of ours.slice(0, 1)) for (const f of features(p.name)) if (!f.key.startsWith("w:") && !merged.has(f.key)) merged.set(f.key, f);
+  const prices = sources.map((s) => s.priceTtc).filter((v): v is number => !!v && v > 0);
+  const priceTtc = prices.length ? median(prices) : null;
+  return {
+    query: q,
+    title: q,
+    brand: deriveIdentity(q).brand,
+    type,
+    category: ours.find((p) => p.category)?.category ?? null,
+    priceTtc,
+    priceBand: priceTtc ? null : priceBandFor(q, type, catalog),
+    refKey: "",
+    features: [...merged.values()],
+    sources,
+    ours,
+  };
+}
+
+/** Three words or more is a description; fewer is a reference or a short name. */
+const isDescription = (q: string) => q.split(/\s+/).filter(Boolean).length >= 3;
+
 export async function resolveTarget(workspaceId: string, query: string, catalog: Product[]): Promise<Target> {
   const q = query.trim();
+  if (isDescription(q)) return resolveDescription(workspaceId, q, catalog);
   const refKey = normalizeRef(q);
   const like = `%${q}%`;
   const sources: TargetSource[] = [];
 
-  const ours = refKey.length >= 4 ? catalog.filter((p) => productKeys(p).includes(refKey) && !COMPATIBLE_RE.test(p.name)) : [];
+  // By reference, or by name ("Canon G3410" in "imprimante jet dencre canon pixma g3410 a4…").
+  const model = modelTokens(q);
+  const ours = catalog.filter(
+    (p) => !COMPATIBLE_RE.test(p.name) && ((refKey.length >= 4 && productKeys(p).includes(refKey)) || (model.length > 0 && !p.isDemo && isSameProduct(p.name, model, []))),
+  );
   for (const p of ours) {
     const price = n(p.ownPriceTnd) || n(p.actualSellingPrice) || null;
     sources.push({ kind: "catalogue", label: "Notre catalogue", title: p.name, priceTtc: price });
@@ -221,6 +376,7 @@ export async function resolveTarget(workspaceId: string, query: string, catalog:
     type: productType(`${category ?? ""} ${titled}`) ?? productType(sources.map((s) => s.title).join(" ")),
     category,
     priceTtc: prices.length ? median(prices) : null,
+    priceBand: null,
     refKey,
     features: feats,
     sources,
@@ -275,7 +431,7 @@ export function rankEquivalents(target: Target, catalog: Product[], opts: { inSt
   const out: Equivalent[] = [];
   for (const p of catalog) {
     if (p.archivedAt || oursIds.has(p.id)) continue;
-    if (opts.inStockOnly && p.stockQty <= 0) continue;
+    if (opts.inStockOnly && !isAvailable(p)) continue;
     const text = `${p.name} ${p.description ?? ""}`;
     const type = productType(`${p.category ?? ""} ${p.name}`);
     // Compatible / adaptable consumable carrying the requested reference in its name.
@@ -307,13 +463,26 @@ export function rankEquivalents(target: Target, catalog: Product[], opts: { inSt
     }
     const similarity = sameRef ? 1 : Math.max(0, got) / total;
     if (!sameRef && similarity < 0.25) continue;
-    const priceTtc = n(p.ownPriceTnd) || n(p.actualSellingPrice) || null;
-    const priceGap = priceTtc && target.priceTtc ? priceTtc / target.priceTtc - 1 : null;
+    const priceTtc = ourPrice(p);
+    const band = target.priceBand;
+    // Inside the requested range counts as the right price; outside, the distance to the nearest edge.
+    const priceGap = !priceTtc
+      ? null
+      : target.priceTtc
+        ? priceTtc / target.priceTtc - 1
+        : band
+          ? priceTtc < band.lo
+            ? priceTtc / band.lo - 1
+            : priceTtc > band.hi
+              ? priceTtc / band.hi - 1
+              : 0
+          : null;
     // Characteristics first; a price far from the requested product lowers the rank by up to 30 %.
     let score = 100 * similarity * (priceGap === null ? 0.9 : 1 - Math.min(0.3, Math.abs(priceGap) * 0.4));
-    if (p.stockQty > 0) score += 8;
+    if (isAvailable(p)) score += 8;
     if (target.category && p.category === target.category) score += 5;
-    if (target.brand && p.brand && p.brand.toLowerCase() === target.brand.toLowerCase()) score += 3;
+    // A brand the client named (or the requested product's brand) ranks ahead of other brands.
+    if (target.brand && (p.brand ?? deriveIdentity(p.name).brand)?.toLowerCase() === target.brand.toLowerCase()) score += 8;
     out.push({
       product: p,
       score,

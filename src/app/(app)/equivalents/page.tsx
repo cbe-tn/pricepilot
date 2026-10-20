@@ -2,16 +2,23 @@ import Link from "next/link";
 import { Badge, Button, Card, EmptyState, Input, PageHeader } from "@/components/ui";
 import { requirePageAuth } from "@/lib/page-auth";
 import { formatTnd } from "@/lib/money";
-import { findEquivalents } from "@/lib/equivalents";
+import { findEquivalents, isAvailable } from "@/lib/equivalents";
+import type { Product } from "@/db/schema";
 
 export const metadata = { title: "Produits équivalents" };
 
 const SOURCE_LABEL = { catalogue: "Catalogue", fournisseur: "Fournisseur", concurrent: "Concurrent", index: "Site concurrent" } as const;
 
-function gapText(gap: number | null) {
+function Availability({ p }: { p: Product }) {
+  if (p.stockQty > 0) return <Badge tone="ok">{p.stockQty} en stock</Badge>;
+  if (p.ownAvailability === "in_stock") return <Badge tone="ok">Dispo sur le site</Badge>;
+  return <Badge tone="bad">Rupture</Badge>;
+}
+
+function gapText(gap: number | null, inBand: boolean) {
   if (gap === null) return null;
   const pct = Math.round(gap * 100);
-  if (Math.abs(pct) < 3) return <span className="text-[#4d6a72]">même prix</span>;
+  if (Math.abs(pct) < 3) return <span className="text-[#4d6a72]">{inBand ? "dans la gamme" : "même prix"}</span>;
   return <span className={pct < 0 ? "text-[#0c8a62]" : "text-[#9a5b08]"}>{pct > 0 ? `+${pct}` : pct} %</span>;
 }
 
@@ -26,20 +33,20 @@ export default async function EquivalentsPage({ searchParams }: { searchParams: 
     <div className="space-y-6">
       <PageHeader
         title="Produits équivalents"
-        subtitle="Un client demande une référence que nous n'avons pas ? Saisissez-la : l'application identifie le produit (catalogue, offres fournisseurs, sites concurrents) puis propose les produits de notre catalogue aux caractéristiques les plus proches."
+        subtitle="Un client demande un produit que nous n'avons pas ? Saisissez sa référence ou sa description complète (marque, modèle, type, capacité, gamme…) : l'application propose les produits de notre catalogue aux caractéristiques les plus proches."
       />
       <Card>
         <form action="/equivalents" className="flex flex-col gap-3 md:flex-row md:items-center">
-          <Input name="q" defaultValue={query} placeholder="Référence ou nom : CF259A, Canon G3410, 82V30046FE, HP 15 i5 16Go…" className="md:flex-1" autoFocus />
+          <Input name="q" defaultValue={query} placeholder="Référence ou description : CF259A, xiaomi redmi note 10 smartphone milieu de gamme 64 go…" className="md:flex-1" autoFocus />
           <label className="flex items-center gap-2 text-sm text-[#4d6a72]">
-            <input type="checkbox" name="tous" value="1" defaultChecked={!inStockOnly} /> Inclure les produits hors stock
+            <input type="checkbox" name="tous" value="1" defaultChecked={!inStockOnly} /> Inclure les produits indisponibles
           </label>
           <Button type="submit">Chercher</Button>
         </form>
       </Card>
 
       {!result ? (
-        <EmptyState title="Saisissez une référence" body="Référence fabricant, code-barres ou nom du produit demandé par le client." />
+        <EmptyState title="Saisissez une référence ou une description" body="Référence fabricant, code-barres, ou description du produit demandé par le client : marque, modèle, type, capacité, « entrée / milieu / haut de gamme »." />
       ) : (
         <>
           <Card>
@@ -60,20 +67,32 @@ export default async function EquivalentsPage({ searchParams }: { searchParams: 
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-[#6b858c]">Prix constaté TTC</p>
-                <p className="mt-1 text-xl font-semibold tabular-nums">{result.target.priceTtc ? formatTnd(result.target.priceTtc) : "—"}</p>
+                {result.target.priceBand ? (
+                  <>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#6b858c]">{result.target.priceBand.label} TTC</p>
+                    <p className="mt-1 text-xl font-semibold tabular-nums">
+                      {formatTnd(result.target.priceBand.lo)} – {formatTnd(result.target.priceBand.hi)}
+                    </p>
+                    <p className="text-[11px] text-[#6b858c]">d&apos;après nos prix pour ce type de produit</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#6b858c]">Prix constaté TTC</p>
+                    <p className="mt-1 text-xl font-semibold tabular-nums">{result.target.priceTtc ? formatTnd(result.target.priceTtc) : "—"}</p>
+                  </>
+                )}
               </div>
             </div>
             {result.target.ours.length ? (
               <div className="mt-4 rounded-lg bg-[#e7f3fa] px-3 py-2 text-sm text-[#1b6f9a]">
-                Nous avons cette référence :{" "}
+                Nous avons ce produit :{" "}
                 {result.target.ours.map((p, i) => (
                   <span key={p.id}>
                     {i ? ", " : ""}
                     <Link href={`/products/${p.id}`} className="font-medium underline">
                       {p.name}
                     </Link>{" "}
-                    ({p.stockQty > 0 ? `${p.stockQty} en stock` : "rupture de stock"})
+                    ({p.stockQty > 0 ? `${p.stockQty} en stock` : isAvailable(p) ? "dispo sur le site" : "rupture de stock"})
                   </span>
                 ))}
               </div>
@@ -100,7 +119,7 @@ export default async function EquivalentsPage({ searchParams }: { searchParams: 
               </details>
             ) : (
               <p className="mt-3 text-sm text-[#9a5b08]">
-                Référence inconnue de nos fournisseurs et des sites concurrents indexés : la recherche se base sur le texte saisi. Ajoutez des mots (type, caractéristiques) pour de meilleurs résultats.
+                Produit inconnu de notre catalogue, de nos fournisseurs et des sites concurrents indexés : la recherche se base sur le texte saisi. Ajoutez des mots (type, capacité, gamme) pour de meilleurs résultats.
               </p>
             )}
           </Card>
@@ -142,9 +161,11 @@ export default async function EquivalentsPage({ searchParams }: { searchParams: 
                           {e.shared.length ? <span className="text-[#0c8a62]">{e.shared.join(" · ")}</span> : null}
                           {e.missing.length ? <span className="block text-[#9a5b08]">Sans : {e.missing.join(" · ")}</span> : null}
                         </td>
-                        <td>{e.product.stockQty > 0 ? <Badge tone="ok">{e.product.stockQty}</Badge> : <Badge tone="bad">Rupture</Badge>}</td>
+                        <td>
+                          <Availability p={e.product} />
+                        </td>
                         <td className="text-right tabular-nums">{e.priceTtc ? formatTnd(e.priceTtc) : "—"}</td>
-                        <td className="text-right tabular-nums">{gapText(e.priceGap) ?? "—"}</td>
+                        <td className="text-right tabular-nums">{gapText(e.priceGap, Boolean(result.target.priceBand)) ?? "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -157,7 +178,7 @@ export default async function EquivalentsPage({ searchParams }: { searchParams: 
           ) : (
             <EmptyState
               title="Aucun équivalent trouvé"
-              body={inStockOnly ? "Aucun produit en stock du même type et aux caractéristiques proches. Essayez d'inclure les produits hors stock." : "Aucun produit du même type et aux caractéristiques proches dans le catalogue."}
+              body={inStockOnly ? "Aucun produit disponible du même type et aux caractéristiques proches. Essayez d'inclure les produits indisponibles." : "Aucun produit du même type et aux caractéristiques proches dans le catalogue."}
             />
           )}
         </>

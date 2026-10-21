@@ -127,6 +127,12 @@ matching public seller product page is available, its direct URL and live price 
 the offer retains the Primini-reported price but links to the seller's own website. Primini tracking
 redirect links are not stored as seller links.
 
+It runs from the Windows task "PricePilot - Primini sync" (`scripts/primini-sync.cmd`) **every hour**
+and is incremental: each run only handles products never synced or synced more than 20 h ago
+(state in `%LOCALAPPDATA%\PricePilot\primini-state.json`, lock file against overlapping runs), so a
+new stock import is picked up within the hour and an interrupted run resumes where it stopped.
+Log: `%LOCALAPPDATA%\PricePilot\primini-sync.log`.
+
 ### Scraping etiquette
 
 Only public pages are read; `robots.txt` is respected; at least **2 s between two requests to the

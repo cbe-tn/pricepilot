@@ -2,6 +2,11 @@
 //   DATABASE_URL=... bun scripts/primini-sync.ts
 // For every catalogue product, imports only the selected shops' Primini prices. Prefer a verified
 // seller product page and its live price; when unavailable, link to that seller's site, never Primini.
+// Incremental and resumable: the scheduled task runs it every hour; each run only handles products
+// never synced or synced more than REFRESH_MS ago (state kept on this PC), so newly imported products
+// are picked up automatically and an interrupted run continues where it stopped.
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { competitorOffers, competitors, priceObservations, products, userSettings, users, workspaces, type Competitor, type Product } from "@/db/schema";
@@ -14,9 +19,51 @@ import { isSelectedCompetitor } from "@/lib/connectors";
 
 const SOURCE_SLUG = "primini-source";
 const CATALOG_MAX_AGE_MS = 3 * 24 * 3600 * 1000;
+const REFRESH_MS = 20 * 3600 * 1000;
+const LOCK_MAX_AGE_MS = 8 * 3600 * 1000;
+
+const stateDir = join(process.env.LOCALAPPDATA ?? ".", "PricePilot");
+mkdirSync(stateDir, { recursive: true });
+const stateFile = join(stateDir, "primini-state.json");
+const lockFile = join(stateDir, "primini-sync.lock");
+
+// One run at a time: an hourly start while a long pass is still running exits immediately.
+if (existsSync(lockFile)) {
+  const lock = JSON.parse(readFileSync(lockFile, "utf8") || "{}") as { pid?: number; at?: number };
+  let alive = false;
+  try {
+    if (lock.pid) process.kill(lock.pid, 0);
+    alive = Boolean(lock.pid);
+  } catch {
+    alive = false;
+  }
+  if (alive && lock.at && Date.now() - lock.at < LOCK_MAX_AGE_MS) {
+    console.log(`Synchronisation déjà en cours (pid ${lock.pid}) : rien à faire.`);
+    process.exit(0);
+  }
+}
+writeFileSync(lockFile, JSON.stringify({ pid: process.pid, at: Date.now() }));
+process.on("exit", () => {
+  try {
+    unlinkSync(lockFile);
+  } catch {}
+});
+
+/** productId -> last successful sync (ms). Survives interrupted runs. */
+const synced: Record<string, number> = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, "utf8") || "{}") : {};
+const saveState = () => writeFileSync(stateFile, JSON.stringify(synced));
 
 const [ws] = await db.select().from(workspaces).limit(1);
 if (!ws) throw new Error("Aucun espace de travail");
+
+const list = await db.select().from(products).where(and(eq(products.workspaceId, ws.id), isNull(products.archivedAt)));
+// Never-synced products first (a fresh stock import), then the oldest.
+const due = list.filter((p) => !synced[p.id] || Date.now() - synced[p.id] > REFRESH_MS).sort((a, b) => (synced[a.id] ?? 0) - (synced[b.id] ?? 0));
+if (!due.length) {
+  console.log(`Rien à synchroniser : ${list.length} produits déjà à jour.`);
+  await pool.end();
+  process.exit(0);
+}
 
 // Hidden source: holds Primini's catalogue index only; disabled, never searched by the hosted app, no offers.
 let [source] = await db.select().from(competitors).where(and(eq(competitors.workspaceId, ws.id), eq(competitors.slug, SOURCE_SLUG)));
@@ -168,9 +215,8 @@ async function upsert(product: Product, shop: Competitor, pageUrl: string, offer
   return "added";
 }
 
-const list = await db.select().from(products).where(and(eq(products.workspaceId, ws.id), isNull(products.archivedAt)));
-const totals = { products: list.length, found: 0, added: 0, updated: 0, directMatchesAdded: 0, reviewCandidates: 0, skippedDirect: 0, skippedOtherShops: 0, sellerSiteFallbacks: 0 };
-console.log(`${list.length} produits à rechercher sur Primini…`);
+const totals = { products: due.length, found: 0, added: 0, updated: 0, directMatchesAdded: 0, reviewCandidates: 0, skippedDirect: 0, skippedOtherShops: 0, sellerSiteFallbacks: 0 };
+console.log(`${due.length}/${list.length} produits à rechercher sur Primini…`);
 
 const [user] = await db.select().from(users).where(eq(users.workspaceId, ws.id)).limit(1);
 if (!user) throw new Error("Aucun utilisateur associé à l'espace de travail");
@@ -178,17 +224,7 @@ const [settings] = await db.select().from(userSettings).where(eq(userSettings.us
 if (!settings) throw new Error("Aucun paramètre utilisateur associé au compte");
 const matchingAuth: AuthContext = { user, workspace: ws, settings };
 const selectedShopIds = selectedShops.map((c) => c.id);
-for (let offset = 0; offset < list.length; offset += 5) {
-  const batch = list.slice(offset, offset + 5);
-  const outcomes = await Promise.all(batch.map((p) => autoMatchProduct(matchingAuth, p, { competitorIds: selectedShopIds, verifyPerCompetitor: 1 })));
-  for (const outcome of outcomes) {
-    totals.directMatchesAdded += outcome.tracked.length;
-    totals.reviewCandidates += outcome.review.length;
-  }
-  console.log(`  recherche directe boutiques : ${Math.min(offset + batch.length, list.length)}/${list.length}`);
-}
-
-for (const [i, p] of list.entries()) {
+async function syncFromPrimini(p: Product) {
   const costTtc = n(p.purchasePrice) * (n(p.exchangeRate) || 1) * (1 + n(p.vatRate));
   let page: { url: string; sellers: Array<{ title: string; priceTnd: number; seller: string }> } | null = null;
   for (const term of searchTermsForProduct(p)) {
@@ -201,7 +237,7 @@ for (const [i, p] of list.entries()) {
     }
     if (page) break;
   }
-  if (!page) continue;
+  if (!page) return;
   totals.found += 1;
   // Cheapest offer per shop (a shop can list several variants).
   const byShop = new Map<string, PriceOffer>();
@@ -235,13 +271,35 @@ for (const [i, p] of list.entries()) {
     else if (r === "updated") totals.updated += 1;
     else if (r === "direct") totals.skippedDirect += 1;
   }
-  if ((i + 1) % 10 === 0) console.log(`  ${i + 1}/${list.length} — ${totals.found} trouvés sur Primini, ${totals.added} prix ajoutés`);
+}
+
+// Batches of 5: direct search on the shops' own sites (in parallel), then their Primini prices.
+// Each product is marked done as soon as it is synced, so an interrupted run loses at most a batch.
+for (let offset = 0; offset < due.length; offset += 5) {
+  const batch = due.slice(offset, offset + 5);
+  const outcomes = await Promise.all(batch.map((p) => autoMatchProduct(matchingAuth, p, { competitorIds: selectedShopIds, verifyPerCompetitor: 1 })));
+  for (const outcome of outcomes) {
+    totals.directMatchesAdded += outcome.tracked.length;
+    totals.reviewCandidates += outcome.review.length;
+  }
+  for (const p of batch) {
+    try {
+      await syncFromPrimini(p);
+      synced[p.id] = Date.now();
+    } catch (err) {
+      console.log(`  erreur sur « ${p.name.slice(0, 60)} » : ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  saveState();
+  writeFileSync(lockFile, JSON.stringify({ pid: process.pid, at: Date.now() }));
+  console.log(`  ${Math.min(offset + batch.length, due.length)}/${due.length} — ${totals.found} trouvés sur Primini, ${totals.added} prix ajoutés`);
 }
 
 const productById = new Map(list.map((p) => [p.id, p]));
+const dueIds = new Set(due.map((p) => p.id));
 const selectedShopById = new Map(selectedShops.map((c) => [c.id, c]));
 const oldPriminiOffers = (await db.select().from(competitorOffers).where(and(eq(competitorOffers.workspaceId, ws.id), eq(competitorOffers.isDemo, false))))
-  .filter((o) => isPriminiUrl(o.url) && selectedShopById.has(o.competitorId));
+  .filter((o) => isPriminiUrl(o.url) && selectedShopById.has(o.competitorId) && (!o.productId || dueIds.has(o.productId) || !productById.has(o.productId)));
 let directLinksFixed = 0;
 for (const o of oldPriminiOffers) {
   const shop = selectedShopById.get(o.competitorId)!;

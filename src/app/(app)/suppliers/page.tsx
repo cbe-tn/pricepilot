@@ -63,11 +63,12 @@ export default async function SuppliersPage() {
           <Card key={s.id}>
             <h3 className="font-semibold">{s.name}</h3>
             <p className="text-sm text-[#6b858c]">
-              {s.contactName} · {s.city}
-              <br />
-              {s.email} · {s.phone}
+              {[s.contactName, s.city].filter(Boolean).join(" · ")}
+              {s.contactName || s.city ? <br /> : null}
+              {[s.email, s.phone].filter(Boolean).join(" · ")}
             </p>
-            <p className="mt-2 text-sm">{s.notes}</p>
+            {/* Notes hold one contact or price list per line. */}
+            <p className="mt-2 whitespace-pre-line break-words text-sm">{s.notes}</p>
           </Card>
         ))}
       </div>

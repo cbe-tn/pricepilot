@@ -3,7 +3,7 @@
 // checked pricing object, never from free text; Arabic is shaped by the browser (direction = "rtl").
 // Each style (template) changes the layout, typography, photo treatment, price treatment and decor.
 import { eventById, type EventDecor } from "@/lib/events";
-import { POSTER_SIZE, type ElementLayout, type PosterDesign, type PosterElement, type PosterPricing, type PosterProduct, type PosterTheme } from "@/lib/poster";
+import { POSTER_SIZE, type ElementLayout, type PosterDesign, type PosterLayer, type PosterPricing, type PosterProduct, type PosterTheme } from "@/lib/poster";
 
 const S = POSTER_SIZE;
 
@@ -15,9 +15,15 @@ export type PosterAssets = {
   fonts: { latin: string; arabic: string; display: string; serif: string };
   /** Realistic background photo for the "scene" style (same-origin, so the canvas stays exportable). */
   scene?: HTMLImageElement | null;
+  /** Pictures of the free layers, keyed by their src. */
+  layerImages?: Map<string, HTMLImageElement | null>;
 };
 
-export type Box = { el: PosterElement; x: number; y: number; w: number; h: number };
+/**
+ * Selectable area in poster pixels: x / y / w / h of the unrotated box, rotated by `rot` degrees around
+ * its centre. key = "title" | "products" | "price" | "benefits" | "product:<id>" | "layer:<id>".
+ */
+export type Box = { key: string; x: number; y: number; w: number; h: number; rot: number };
 type Rect = { x: number; y: number; w: number; h: number };
 type Ctx = CanvasRenderingContext2D;
 
@@ -886,18 +892,37 @@ function roundRect(ctx: Ctx, x: number, y: number, w: number, h: number, r: numb
   ctx.roundRect(x, y, w, h, r);
 }
 
-function withLayout(ctx: Ctx, area: Rect, l: ElementLayout, draw: () => void): Rect {
+const HOME: ElementLayout = { dx: 0, dy: 0, scale: 1, rot: 0 };
+const RAD = Math.PI / 180;
+
+function withLayout(ctx: Ctx, area: Rect, l: ElementLayout, draw: () => void): Rect & { rot: number } {
   const cx = area.x + area.w / 2;
   const cy = area.y + area.h / 2;
+  const rot = l.rot ?? 0;
   ctx.save();
   ctx.translate(cx + l.dx, cy + l.dy);
+  ctx.rotate(rot * RAD);
   ctx.scale(l.scale, l.scale);
   ctx.translate(-cx, -cy);
   draw();
   ctx.restore();
   const w = area.w * l.scale;
   const h = area.h * l.scale;
-  return { x: cx + l.dx - w / 2, y: cy + l.dy - h / 2, w, h };
+  return { x: cx + l.dx - w / 2, y: cy + l.dy - h / 2, w, h, rot };
+}
+
+/** Box of an element drawn inside a parent layout (a product photo inside the products block), in poster pixels. */
+function nestedBox(parentArea: Rect, parent: ElementLayout, child: Rect & { rot: number }): Rect & { rot: number } {
+  const pcx = parentArea.x + parentArea.w / 2;
+  const pcy = parentArea.y + parentArea.h / 2;
+  const a = (parent.rot ?? 0) * RAD;
+  const lx = (child.x + child.w / 2 - pcx) * parent.scale;
+  const ly = (child.y + child.h / 2 - pcy) * parent.scale;
+  const cx = pcx + parent.dx + lx * Math.cos(a) - ly * Math.sin(a);
+  const cy = pcy + parent.dy + lx * Math.sin(a) + ly * Math.cos(a);
+  const w = child.w * parent.scale;
+  const h = child.h * parent.scale;
+  return { x: cx - w / 2, y: cy - h / 2, w, h, rot: (parent.rot ?? 0) + child.rot };
 }
 
 function hexA(hex: string, a: number) {
@@ -1452,17 +1477,20 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
   t.background(ctx, d, assets);
   const ev = eventById(d.event);
   if (ev) drawEventDecor(ctx, d, ev.decor, ev.id);
-  drawLogo(ctx, d, t, assets);
-  drawTag(ctx, d, t, assets, ar ? d.tagAr : d.tag);
+  const hidden = new Set(d.hidden ?? []);
+  boxes.push(...drawLayers(ctx, d, assets, true));
+  if (!hidden.has("logo")) drawLogo(ctx, d, t, assets);
+  if (!hidden.has("tag")) drawTag(ctx, d, t, assets, ar ? d.tagAr : d.tag);
 
   const benefits = (ar ? d.benefitsAr : d.benefits).map((b) => b.trim()).filter(Boolean);
   const benefitsAr = bi ? d.benefitsAr.map((b) => b.trim()).filter(Boolean) : [];
-  const hasBenefits = benefits.length > 0 || benefitsAr.length > 0;
+  const hasBenefits = !hidden.has("benefits") && (benefits.length > 0 || benefitsAr.length > 0);
   const titleColor = t.footOnAccent ? "#ffffff" : t.text;
   const subColor = t.footOnAccent ? "rgba(255,255,255,0.9)" : t.muted;
 
   // ---------- Title block ----------
   const titleArea = t.title;
+  if (!hidden.has("title")) {
   const titleBox = withLayout(ctx, titleArea, d.layout.title, () => {
     const rawMain = ar ? d.titleAr : d.title;
     const main = t.titleUpper && !AR.test(rawMain) ? rawMain.toUpperCase() : rawMain;
@@ -1523,21 +1551,27 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
     if (y > titleArea.y + titleArea.h + 12) warnings.push("Le bloc titre déborde : raccourcissez le titre ou le sous-titre.");
     ctx.direction = "ltr";
   });
-  boxes.push({ el: "title", ...titleBox });
+  boxes.push({ key: "title", ...titleBox });
+  }
 
   // ---------- Products ----------
   const prodArea = t.products(hasBenefits && t.benefits.kind === "bubbles");
   const ordered = d.productOrder.map((id) => products.find((p) => p.id === id)).filter((p): p is PosterProduct => Boolean(p));
+  const productBoxes: Box[] = [];
   const prodBox = withLayout(ctx, prodArea, d.layout.products, () => {
     const cells = productCells(prodArea, ordered.length);
-    ordered.forEach((p, i) => drawProduct(ctx, d, t, assets, assets.photos.get(p.id), cells[i], i));
+    // Each photo can also be moved, resized and turned on its own inside the block.
+    ordered.forEach((p, i) => {
+      const own = withLayout(ctx, cells[i], d.productLayout?.[p.id] ?? HOME, () => drawProduct(ctx, d, t, assets, assets.photos.get(p.id), cells[i], i));
+      productBoxes.push({ key: `product:${p.id}`, ...nestedBox(prodArea, d.layout.products, own) });
+    });
     // "+" between pack items.
     ctx.fillStyle = d.theme === "flash" ? FLASH_YELLOW : d.accent;
     ctx.textAlign = "center";
     ctx.font = font(assets, 900, 96, "+");
     for (const [x, y] of plusPositions(prodArea, ordered.length)) ctx.fillText("+", x, y + 34);
   });
-  boxes.push({ el: "products", ...prodBox });
+  boxes.push({ key: "products", ...prodBox }, ...productBoxes);
 
   // ---------- Benefits ----------
   if (hasBenefits) {
@@ -1575,7 +1609,7 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
           ctx.direction = "ltr";
         });
       });
-      boxes.push({ el: "benefits", ...b });
+      boxes.push({ key: "benefits", ...b });
     } else {
       // Bilingual pills carry two lines: French above, Arabic below (never cut mid-sentence).
       const two = items.some(([fr, arTxt]) => fr && arTxt);
@@ -1620,17 +1654,27 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
           ctx.direction = "ltr";
         });
       });
-      boxes.push({ el: "benefits", ...b });
+      boxes.push({ key: "benefits", ...b });
     }
   }
 
   // ---------- Price ----------
   if (pricing.price != null) {
     const p = withLayout(ctx, t.price, d.layout.price, () => drawPrice(ctx, d, t, assets, pricing, t.price));
-    boxes.push({ el: "price", ...p });
+    boxes.push({ key: "price", ...p });
   }
 
   // ---------- Bottom left: call to action, contact, validity ----------
+  if (!hidden.has("footer")) drawFooter(ctx, d, t, assets, warnings);
+  boxes.push(...drawLayers(ctx, d, assets, false));
+
+  ctx.restore();
+  return { boxes, warnings: [...new Set(warnings)] };
+}
+
+function drawFooter(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAssets, warnings: string[]) {
+  const ar = d.lang === "ar";
+  const bi = d.lang === "bi";
   const footText = t.footOnAccent ? "#ffffff" : t.text;
   const footMuted = t.footOnAccent ? "rgba(255,255,255,0.88)" : t.muted;
   let y = S - 40;
@@ -1678,7 +1722,196 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
     ctx.fillText(f.lines[0] ?? "", 44 + w / 2, y - 3);
     ctx.direction = "ltr";
   }
+}
 
-  ctx.restore();
-  return { boxes, warnings: [...new Set(warnings)] };
+// ---------------------------------------------------------------------------------------------
+// Free layers: pictures, texts and shapes added in the editor
+// ---------------------------------------------------------------------------------------------
+
+function layerFamily(assets: PosterAssets, l: PosterLayer, text: string) {
+  const kind = l.font ?? "latin";
+  if (kind === "arabic" || AR.test(text)) return { family: assets.fonts.arabic, weight: l.weight ?? 800 };
+  return { family: assets.fonts[kind], weight: kind === "display" ? 400 : (l.weight ?? 800) };
+}
+
+/** Word-wraps each paragraph of a text layer to its box width. */
+function wrapLines(ctx: Ctx, text: string, maxW: number): string[] {
+  const out: string[] = [];
+  for (const para of text.split("\n")) {
+    let line = "";
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      const next = line ? `${line} ${word}` : word;
+      if (!line || ctx.measureText(next).width <= maxW) line = next;
+      else {
+        out.push(line);
+        line = word;
+      }
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/** Paints a text layer centred on the origin; returns its height. */
+function drawTextLayer(ctx: Ctx, l: PosterLayer, assets: PosterAssets): number {
+  const raw = l.text ?? "";
+  const text = l.uppercase && !AR.test(raw) ? raw.toUpperCase() : raw;
+  const size = l.size ?? 64;
+  const { family, weight } = layerFamily(assets, l, text);
+  ctx.font = `${weight} ${Math.round(size)}px ${family}`;
+  const lines = wrapLines(ctx, text, l.w);
+  const lineH = size * 1.15;
+  const pad = l.bg ? size * 0.32 : 0;
+  const total = lines.length * lineH + pad * 2;
+  const top = -total / 2 + pad;
+  const anchor = l.align === "left" ? -l.w / 2 : l.align === "right" ? l.w / 2 : 0;
+  ctx.textAlign = l.align ?? "center";
+  ctx.textBaseline = "middle";
+  if (l.bg) {
+    const widest = Math.max(1, ...lines.map((t) => ctx.measureText(t).width));
+    const bw = Math.min(l.w, widest) + pad * 2;
+    const bx = l.align === "left" ? -l.w / 2 - pad : l.align === "right" ? l.w / 2 - bw + pad : -bw / 2;
+    roundRect(ctx, bx, -total / 2, bw, total, Math.min(total / 2, size * 0.4));
+    ctx.fillStyle = l.bg;
+    if (l.shadow) {
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 24;
+      ctx.shadowOffsetY = 8;
+    }
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+  } else if (l.shadow) {
+    ctx.shadowColor = "rgba(0,0,0,0.5)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 6;
+  }
+  lines.forEach((line, i) => {
+    const y = top + (i + 0.5) * lineH;
+    setDir(ctx, line);
+    if ((l.strokeW ?? 0) > 0) {
+      ctx.lineJoin = "round";
+      ctx.lineWidth = (l.strokeW ?? 0) * 2;
+      ctx.strokeStyle = l.stroke || "#000000";
+      ctx.strokeText(line, anchor, y);
+    }
+    ctx.fillStyle = l.color || "#ffffff";
+    ctx.fillText(line, anchor, y);
+  });
+  ctx.direction = "ltr";
+  ctx.textBaseline = "alphabetic";
+  ctx.shadowColor = "transparent";
+  return total;
+}
+
+function shapePath(ctx: Ctx, l: PosterLayer) {
+  const w = l.w;
+  const h = l.h;
+  ctx.beginPath();
+  switch (l.shape) {
+    case "ellipse":
+      ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+      break;
+    case "burst": {
+      const points = 16;
+      for (let i = 0; i < points * 2; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / points;
+        const k = i % 2 ? 0.8 : 1;
+        ctx.lineTo((Math.cos(a) * w * k) / 2, (Math.sin(a) * h * k) / 2);
+      }
+      ctx.closePath();
+      break;
+    }
+    case "ribbon": {
+      const n = Math.min(h * 0.45, w / 4);
+      ctx.moveTo(-w / 2, -h / 2);
+      ctx.lineTo(w / 2, -h / 2);
+      ctx.lineTo(w / 2 - n, 0);
+      ctx.lineTo(w / 2, h / 2);
+      ctx.lineTo(-w / 2, h / 2);
+      ctx.lineTo(-w / 2 + n, 0);
+      ctx.closePath();
+      break;
+    }
+    case "line":
+      ctx.roundRect(-w / 2, -h / 2, w, h, h / 2);
+      break;
+    default:
+      ctx.roundRect(-w / 2, -h / 2, w, h, Math.min(l.radius ?? 0, w / 2, h / 2));
+  }
+}
+
+function drawShapeLayer(ctx: Ctx, l: PosterLayer) {
+  shapePath(ctx, l);
+  if (l.fill2) {
+    const g = ctx.createLinearGradient(-l.w / 2, -l.h / 2, l.w / 2, l.h / 2);
+    g.addColorStop(0, l.fill || "#e30613");
+    g.addColorStop(1, l.fill2);
+    ctx.fillStyle = g;
+  } else ctx.fillStyle = l.fill || "#e30613";
+  if (l.shadow) {
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = 28;
+    ctx.shadowOffsetY = 10;
+  }
+  if (l.fill !== "transparent") ctx.fill();
+  ctx.shadowColor = "transparent";
+  if ((l.strokeW ?? 0) > 0) {
+    ctx.lineWidth = l.strokeW ?? 0;
+    ctx.strokeStyle = l.stroke || "#ffffff";
+    ctx.stroke();
+  }
+}
+
+function drawImageLayer(ctx: Ctx, l: PosterLayer, assets: PosterAssets) {
+  const img = l.src ? assets.layerImages?.get(l.src) : null;
+  if (!img || !img.naturalWidth) {
+    // Still loading (or missing): a neutral placeholder keeps the layer visible and selectable.
+    ctx.setLineDash([14, 10]);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(120,140,150,0.9)";
+    ctx.strokeRect(-l.w / 2, -l.h / 2, l.w, l.h);
+    ctx.setLineDash([]);
+    return;
+  }
+  const cut = l.removeBg ? cutout(img) : null;
+  const src: CanvasImageSource = cut?.ok ? cut.canvas : img;
+  if (l.flipX) ctx.scale(-1, 1);
+  const r = Math.min(l.radius ?? 0, l.w / 2, l.h / 2);
+  if (r > 0) {
+    roundRect(ctx, -l.w / 2, -l.h / 2, l.w, l.h, r);
+    if (l.shadow) {
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 36;
+      ctx.shadowOffsetY = 14;
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.shadowColor = "transparent";
+    }
+    ctx.clip();
+  } else if (l.shadow) {
+    // Follows the picture's own outline (cut-out or transparent PNG).
+    ctx.shadowColor = "rgba(0,0,0,0.38)";
+    ctx.shadowBlur = 30;
+    ctx.shadowOffsetY = 14;
+  }
+  ctx.drawImage(src, -l.w / 2, -l.h / 2, l.w, l.h);
+  ctx.shadowColor = "transparent";
+}
+
+function drawLayers(ctx: Ctx, d: PosterDesign, assets: PosterAssets, behind: boolean): Box[] {
+  const out: Box[] = [];
+  for (const l of d.layers ?? []) {
+    if (!l.visible || Boolean(l.behind) !== behind) continue;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, l.opacity ?? 1));
+    ctx.translate(l.x, l.y);
+    ctx.rotate((l.rot ?? 0) * RAD);
+    let h = l.h;
+    if (l.kind === "text") h = drawTextLayer(ctx, l, assets);
+    else if (l.kind === "shape") drawShapeLayer(ctx, l);
+    else drawImageLayer(ctx, l, assets);
+    ctx.restore();
+    out.push({ key: `layer:${l.id}`, x: l.x - l.w / 2, y: l.y - h / 2, w: l.w, h, rot: l.rot ?? 0 });
+  }
+  return out;
 }

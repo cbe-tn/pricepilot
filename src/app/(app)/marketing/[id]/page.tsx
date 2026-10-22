@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, like, notLike } from "drizzle-orm";
 import { Anton, Cairo, Montserrat, Playfair_Display } from "next/font/google";
 import { db } from "@/db";
 import { marketingAssets, marketingCampaigns } from "@/db/schema";
@@ -8,7 +8,7 @@ import { PosterEditor } from "@/components/marketing/PosterEditor";
 import { PageHeader } from "@/components/ui";
 import { requirePageAuth } from "@/lib/page-auth";
 import { loadPosterProducts } from "@/lib/marketing";
-import { normalizeDesign, type PosterDesign } from "@/lib/poster";
+import { normalizeDesign, UPLOAD_PREFIX, type PosterDesign } from "@/lib/poster";
 import { AI_SCENES_PER_DAY, AMBIANCES, aiScenesConfigured } from "@/lib/ai-scenes";
 
 export const metadata = { title: "Affiche" };
@@ -36,16 +36,23 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
   const generated = await db
     .select({ id: marketingAssets.id })
     .from(marketingAssets)
-    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), eq(marketingAssets.campaignId, campaign.id)))
+    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), eq(marketingAssets.campaignId, campaign.id), notLike(marketingAssets.prompt, `${UPLOAD_PREFIX}%`)))
     .orderBy(desc(marketingAssets.createdAt))
     .limit(20);
+  // Pictures uploaded in the studio, reusable on every poster of the workspace.
+  const uploads = await db
+    .select({ id: marketingAssets.id, prompt: marketingAssets.prompt })
+    .from(marketingAssets)
+    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), like(marketingAssets.prompt, `${UPLOAD_PREFIX}%`)))
+    .orderBy(desc(marketingAssets.createdAt))
+    .limit(60);
 
   return (
     // The font variables make Next load both families (the UI keeps its own font); the canvas draws with them.
     <div className={`${montserrat.variable} ${cairo.variable} ${anton.variable} ${playfair.variable}`}>
       <PageHeader
         title={campaign.name}
-        subtitle="Modifiez les textes, l’ordre et la mise en page ; les prix et les photos viennent du catalogue. Validez pour débloquer le téléchargement."
+        subtitle="Composez librement : calques, images, textes et formes, chaque élément se déplace, se redimensionne et pivote. Les prix et les photos produit viennent du catalogue ; validez pour débloquer le téléchargement."
         actions={
           <Link href="/marketing" className="h-10 rounded-lg border border-[#d7e3e6] bg-white px-4 text-sm leading-10 text-[#0b4a56]">
             Retour au studio
@@ -62,6 +69,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
           versions: campaign.versions.map((v) => ({ at: v.at, design: normalizeDesign(v.design as Partial<PosterDesign>, products) })),
         }}
         initialProducts={products}
+        uploads={uploads.map((u) => ({ id: u.id, url: `/api/marketing/image?asset=${u.id}`, name: u.prompt.slice(UPLOAD_PREFIX.length) }))}
         fonts={{ latin: montserrat.style.fontFamily, arabic: cairo.style.fontFamily, display: anton.style.fontFamily, serif: playfair.style.fontFamily }}
         ai={{
           enabled: aiScenesConfigured(),

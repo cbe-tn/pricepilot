@@ -35,7 +35,65 @@ export type PosterProduct = {
   competitors: Array<{ name: string; price: number; availability: string; url: string | null; checkedAt: string; matchClass: string }>;
 };
 
-export type ElementLayout = { dx: number; dy: number; scale: number };
+/** Offset from the template position, uniform scale and rotation (degrees) of a built-in element. */
+export type ElementLayout = { dx: number; dy: number; scale: number; rot?: number };
+
+/** Built-in elements that can be hidden from the layers panel (products and price always show). */
+export type HideableElement = "title" | "benefits" | "tag" | "logo" | "footer";
+export const HIDEABLE: HideableElement[] = ["title", "benefits", "tag", "logo", "footer"];
+
+export const MAX_LAYERS = 24;
+/** marketing_assets.prompt of a picture uploaded in the studio (AI scenes hold their prompt). */
+export const UPLOAD_PREFIX = "upload:";
+export type LayerKind = "image" | "text" | "shape";
+export type ShapeKind = "rect" | "ellipse" | "burst" | "ribbon" | "line";
+export type LayerFont = "latin" | "display" | "serif" | "arabic";
+/** Uploaded pictures are stored for the workspace and served from our origin (the PNG stays exportable). */
+export const LAYER_SRC = /^\/api\/marketing\/image\?asset=[0-9a-f-]{36}$/i;
+
+/**
+ * Free layer added in the editor (picture, text or shape). x / y are the centre, in poster pixels.
+ * Fields that do not apply to a kind are simply ignored.
+ */
+export type PosterLayer = {
+  id: string;
+  kind: LayerKind;
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rot: number;
+  opacity: number;
+  visible: boolean;
+  locked: boolean;
+  /** Drawn under the template content (behind products, title and price) instead of on top. */
+  behind: boolean;
+  shadow: boolean;
+  // Picture
+  src?: string;
+  flipX?: boolean;
+  radius?: number;
+  /** Remove a plain white background (same cut-out as the product photos). */
+  removeBg?: boolean;
+  // Text
+  text?: string;
+  font?: LayerFont;
+  size?: number;
+  weight?: number;
+  color?: string;
+  align?: "left" | "center" | "right";
+  uppercase?: boolean;
+  /** Bar behind the text, "" for none. */
+  bg?: string;
+  // Shape (and outline for text)
+  shape?: ShapeKind;
+  fill?: string;
+  /** Second gradient colour, "" for a flat fill. */
+  fill2?: string;
+  stroke?: string;
+  strokeW?: number;
+};
 
 export type PosterDesign = {
   brand: PosterBrand;
@@ -70,6 +128,11 @@ export type PosterDesign = {
   scene: PosterScene | null;
   /** Mirror reflection of the product on the surface (realistic scene style). */
   reflection: boolean;
+  /** Each product photo moved / resized on its own, inside the products block (key = product id). */
+  productLayout: Record<string, ElementLayout>;
+  hidden: HideableElement[];
+  /** Free layers (pictures, texts, shapes), bottom first. */
+  layers: PosterLayer[];
 };
 
 export type PosterScene = { url: string; thumb: string; title: string; creator: string; landing: string };
@@ -141,6 +204,9 @@ export function defaultDesign(products: PosterProduct[], opts: { brand: PosterBr
     event: "",
     scene: null,
     reflection: true,
+    productLayout: {},
+    hidden: [],
+    layers: [],
   };
 }
 
@@ -159,8 +225,14 @@ export function normalizeDesign(raw: Partial<PosterDesign>, products: PosterProd
     theme: THEMES.some((t) => t.value === raw.theme) ? raw.theme! : base.theme,
     productOrder: order,
     layout: { ...structuredClone(DEFAULT_LAYOUT), ...(raw.layout ?? {}) },
+    productLayout: Object.fromEntries(Object.entries(raw.productLayout ?? {}).filter(([id]) => ids.has(id))),
+    hidden: (raw.hidden ?? []).filter((h) => HIDEABLE.includes(h)),
+    layers: Array.isArray(raw.layers) ? raw.layers.slice(0, MAX_LAYERS) : [],
   };
 }
+
+/** A price or a discount typed in a free text ("499 DT", "-20 %", "٤٩٩ د.ت"): only the checked price block may show them. */
+export const PRICE_LIKE = /\d[\d\s.,]*\s*(dt\b|dinars?\b|tnd\b|د\.?\s?ت|دينار|%)|%\s*\d/i;
 
 const round3 = (v: number) => Math.round(v * 1000) / 1000;
 const daysSince = (iso: string | null) => (iso ? (Date.now() - new Date(iso).getTime()) / 86_400_000 : Infinity);
@@ -234,9 +306,16 @@ export function checkPoster(design: PosterDesign, products: PosterProduct[]): Po
       if (real < 20) errors.push(`Soldes : la remise minimale légale est de 20 % (ici ${real.toLocaleString("fr-FR")} %).`);
     }
   }
+  for (const l of design.layers) {
+    if (l.kind === "text" && l.visible && PRICE_LIKE.test(l.text ?? "")) {
+      errors.push(`Calque « ${l.name} » : les prix et les remises s'affichent uniquement dans le bloc Prix (vérifié sur le catalogue).`);
+    }
+  }
+  if (design.layers.some((l) => l.kind === "image" && l.visible && !LAYER_SRC.test(l.src ?? ""))) errors.push("Une image ajoutée n'est pas enregistrée dans le studio : importez-la à nouveau.");
+
   if (design.theme === "scene" && !design.scene) errors.push("Générez une scène IA (ou choisissez-en une déjà générée) pour le style « Scène IA ».");
 
-  if (!(design.lang === "ar" ? design.titleAr : design.title).trim()) errors.push("Le titre de l'affiche est vide.");
+  if (!design.hidden.includes("title") && !(design.lang === "ar" ? design.titleAr : design.title).trim()) errors.push("Le titre de l'affiche est vide.");
   if (design.validUntil && new Date(design.validUntil).getTime() < new Date(new Date().toDateString()).getTime()) {
     errors.push("La date de fin de l'offre est déjà passée.");
   }

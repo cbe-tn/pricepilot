@@ -90,7 +90,8 @@ if (!status?.size || !status.indexedAt || Date.now() - status.indexedAt.getTime(
   console.log("  pages produit :", (await rebuildCatalog(source)).size);
 }
 
-const shopKey = (s: string) => compactText(s).replace(/^www/, "").replace(/(tn|com|net)$/, "");
+// Only a real web suffix is dropped ("mytek.tn" -> "mytek"): "SpaceNet" and "Tunisianet" keep their "net".
+const shopKey = (s: string) => compactText(s.replace(/\.(tn|com|net)\b/gi, "")).replace(/^www/, "");
 const allComps = await db.select().from(competitors).where(eq(competitors.workspaceId, ws.id));
 const selectedShops = allComps.filter(isSelectedCompetitor);
 const own = [ws.name, ws.legalName, ...allComps.filter((c) => c.isOwnShop).map((c) => c.name)].filter(Boolean).map((s) => shopKey(s!));

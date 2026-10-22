@@ -133,6 +133,14 @@ and is incremental: each run only handles products never synced or synced more t
 new stock import is picked up within the hour and an interrupted run resumes where it stopped.
 Log: `%LOCALAPPDATA%\PricePilot\primini-sync.log`.
 
+The same task then runs `scripts/price-agent.ts`, the **price agent**: for articles still without any
+competitor price it searches the selected shops with more spellings of the reference and asks Claude
+(`ANTHROPIC_API_KEY` in `.env.supabase`, model `CLAUDE_MATCH_MODEL`, default `claude-opus-5-5`) whether
+each candidate page sells the same article. Sure matches (≥ 80 %) become tracked prices; probable ones
+are saved *à confirmer* (excluded from comparisons until confirmed in the benchmark). 60 articles per
+run (`PRICE_AGENT_MAX`), an article without a match is retried after 7 days, `--dry` to test without
+saving. Log: `%LOCALAPPDATA%\PricePilot\price-agent.log`.
+
 ### Scraping etiquette
 
 Only public pages are read; `robots.txt` is respected; at least **2 s between two requests to the

@@ -10,4 +10,7 @@ set "BUN=%LOCALAPPDATA%\Microsoft\WinGet\Packages\Oven-sh.Bun_Microsoft.Winget.S
 echo ===== %DATE% %TIME% ===== >> "%LOGDIR%\primini-sync.log"
 "%BUN%" scripts\primini-sync.ts >> "%LOGDIR%\primini-sync.log" 2>&1
 echo exit code %ERRORLEVEL% >> "%LOGDIR%\primini-sync.log"
+rem Price agent (Claude) for articles still without a competitor price; skips itself without ANTHROPIC_API_KEY.
+"%BUN%" scripts\price-agent.ts >> "%LOGDIR%\price-agent.log" 2>&1
+echo exit code %ERRORLEVEL% >> "%LOGDIR%\price-agent.log"
 endlocal

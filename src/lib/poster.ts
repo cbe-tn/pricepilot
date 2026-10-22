@@ -4,7 +4,29 @@
 
 import { eventById, isoDay } from "./events";
 
+/** Design space of the templates (a 1080 square); other formats are laid out from it. */
 export const POSTER_SIZE = 1080;
+
+export type PosterFormat = "post" | "portrait" | "story" | "hero" | "strip" | "promo" | "a4";
+export const FORMATS: Array<{ value: PosterFormat; label: string; group: string; w: number; h: number }> = [
+  { value: "post", label: "Publication carrée", group: "Réseaux sociaux", w: 1080, h: 1080 },
+  { value: "portrait", label: "Publication portrait 4:5", group: "Réseaux sociaux", w: 1080, h: 1350 },
+  { value: "story", label: "Story / Reel", group: "Réseaux sociaux", w: 1080, h: 1920 },
+  { value: "hero", label: "Bannière d’accueil du site", group: "Site web", w: 1920, h: 600 },
+  { value: "strip", label: "Bandeau large du site", group: "Site web", w: 2000, h: 400 },
+  { value: "promo", label: "Bloc promo du site", group: "Site web", w: 1200, h: 600 },
+  { value: "a4", label: "Affiche A4 (impression)", group: "Impression", w: 1240, h: 1754 },
+];
+export function formatSize(f: PosterFormat | undefined): { w: number; h: number } {
+  const hit = FORMATS.find((x) => x.value === f) ?? FORMATS[0];
+  return { w: hit.w, h: hit.h };
+}
+/** square · wide (website banners) · tall (portrait, story, A4): decides the automatic arrangement. */
+export function formatFamily(f: PosterFormat | undefined): "square" | "wide" | "tall" {
+  const { w, h } = formatSize(f);
+  const r = w / h;
+  return r > 1.6 ? "wide" : r < 0.9 ? "tall" : "square";
+}
 export const MAX_POSTER_PRODUCTS = 4;
 /** A numedia.tn price older than this is flagged before it is printed as the crossed-out price. */
 export const OWN_PRICE_MAX_AGE_DAYS = 3;
@@ -45,6 +67,8 @@ export const HIDEABLE: HideableElement[] = ["title", "benefits", "tag", "logo", 
 export const MAX_LAYERS = 24;
 /** marketing_assets.prompt of a picture uploaded in the studio (AI scenes hold their prompt). */
 export const UPLOAD_PREFIX = "upload:";
+/** marketing_assets.prompt of an AI picture made to be placed as a layer ("ai-image:<label>|<prompt>"). */
+export const AI_IMAGE_PREFIX = "ai-image:";
 export type LayerKind = "image" | "text" | "shape";
 export type ShapeKind = "rect" | "ellipse" | "burst" | "ribbon" | "line";
 export type LayerFont = "latin" | "display" | "serif" | "arabic";
@@ -96,6 +120,8 @@ export type PosterLayer = {
 };
 
 export type PosterDesign = {
+  /** Output size (social post, website banner, A4…). */
+  format: PosterFormat;
   brand: PosterBrand;
   lang: PosterLang;
   theme: PosterTheme;
@@ -179,6 +205,7 @@ export function defaultDesign(products: PosterProduct[], opts: { brand: PosterBr
   const first = products[0] ? splitName(products[0].name) : { kind: "", rest: "" };
   const site = (opts.website ?? "").replace(/^https?:\/\//, "").replace(/\/$/, "");
   return {
+    format: "post",
     brand: opts.brand,
     lang: opts.lang,
     theme: "studio",
@@ -223,6 +250,7 @@ export function normalizeDesign(raw: Partial<PosterDesign>, products: PosterProd
     benefitsAr: (raw.benefitsAr ?? []).slice(0, 3),
     accent: BRAND_COLORS.some((c) => c.value === raw.accent) ? raw.accent! : base.accent,
     theme: THEMES.some((t) => t.value === raw.theme) ? raw.theme! : base.theme,
+    format: FORMATS.some((f) => f.value === raw.format) ? raw.format! : "post",
     productOrder: order,
     layout: { ...structuredClone(DEFAULT_LAYOUT), ...(raw.layout ?? {}) },
     productLayout: Object.fromEntries(Object.entries(raw.productLayout ?? {}).filter(([id]) => ids.has(id))),
@@ -396,7 +424,7 @@ export function fmt(v: number): string {
 }
 
 /** File name for the download: "pack-rentree-1080x1080.png". */
-export function posterFileName(name: string): string {
+export function posterFileName(name: string, w = POSTER_SIZE, h = POSTER_SIZE): string {
   const slug = name
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
@@ -404,7 +432,7 @@ export function posterFileName(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 60);
-  return `${slug || "affiche"}-1080x1080.png`;
+  return `${slug || "affiche"}-${w}x${h}.png`;
 }
 
 /**

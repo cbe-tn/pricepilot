@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, desc, eq, like, notLike } from "drizzle-orm";
+import { and, desc, eq, like, notLike, or } from "drizzle-orm";
 import { Anton, Cairo, Montserrat, Playfair_Display } from "next/font/google";
 import { db } from "@/db";
 import { marketingAssets, marketingCampaigns } from "@/db/schema";
@@ -8,8 +8,8 @@ import { PosterEditor } from "@/components/marketing/PosterEditor";
 import { PageHeader } from "@/components/ui";
 import { requirePageAuth } from "@/lib/page-auth";
 import { loadPosterProducts } from "@/lib/marketing";
-import { normalizeDesign, UPLOAD_PREFIX, type PosterDesign } from "@/lib/poster";
-import { AI_SCENES_PER_DAY, AMBIANCES, aiScenesConfigured } from "@/lib/ai-scenes";
+import { AI_IMAGE_PREFIX, normalizeDesign, UPLOAD_PREFIX, type PosterDesign } from "@/lib/poster";
+import { AI_IDEAS, AI_SCENES_PER_DAY, AI_STYLES, AMBIANCES, aiScenesConfigured } from "@/lib/ai-scenes";
 
 export const metadata = { title: "Affiche" };
 // Server actions of this page include AI scene generation (about 10 s).
@@ -36,14 +36,21 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
   const generated = await db
     .select({ id: marketingAssets.id })
     .from(marketingAssets)
-    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), eq(marketingAssets.campaignId, campaign.id), notLike(marketingAssets.prompt, `${UPLOAD_PREFIX}%`)))
+    .where(
+      and(
+        eq(marketingAssets.workspaceId, auth.workspace.id),
+        eq(marketingAssets.campaignId, campaign.id),
+        notLike(marketingAssets.prompt, `${UPLOAD_PREFIX}%`),
+        notLike(marketingAssets.prompt, `${AI_IMAGE_PREFIX}%`),
+      ),
+    )
     .orderBy(desc(marketingAssets.createdAt))
     .limit(20);
   // Pictures uploaded in the studio, reusable on every poster of the workspace.
   const uploads = await db
     .select({ id: marketingAssets.id, prompt: marketingAssets.prompt })
     .from(marketingAssets)
-    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), like(marketingAssets.prompt, `${UPLOAD_PREFIX}%`)))
+    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), or(like(marketingAssets.prompt, `${UPLOAD_PREFIX}%`), like(marketingAssets.prompt, `${AI_IMAGE_PREFIX}%`))))
     .orderBy(desc(marketingAssets.createdAt))
     .limit(60);
 
@@ -69,12 +76,18 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
           versions: campaign.versions.map((v) => ({ at: v.at, design: normalizeDesign(v.design as Partial<PosterDesign>, products) })),
         }}
         initialProducts={products}
-        uploads={uploads.map((u) => ({ id: u.id, url: `/api/marketing/image?asset=${u.id}`, name: u.prompt.slice(UPLOAD_PREFIX.length) }))}
+        uploads={uploads.map((u) => ({
+          id: u.id,
+          url: `/api/marketing/image?asset=${u.id}`,
+          name: u.prompt.startsWith(AI_IMAGE_PREFIX) ? `IA · ${u.prompt.slice(AI_IMAGE_PREFIX.length).split("|")[0]}` : u.prompt.slice(UPLOAD_PREFIX.length),
+        }))}
         fonts={{ latin: montserrat.style.fontFamily, arabic: cairo.style.fontFamily, display: anton.style.fontFamily, serif: playfair.style.fontFamily }}
         ai={{
           enabled: aiScenesConfigured(),
           perDay: AI_SCENES_PER_DAY,
           ambiances: AMBIANCES.map(({ id, label }) => ({ id, label })),
+          styles: AI_STYLES.map(({ id, label }) => ({ id, label })),
+          ideas: { background: AI_IDEAS.background.map(({ id, label }) => ({ id, label })), element: AI_IDEAS.element.map(({ id, label }) => ({ id, label })) },
           generated: generated.map((g) => {
             const url = `/api/marketing/image?asset=${g.id}`;
             return { url, thumb: url, title: "Scène IA", creator: "Image générée par IA (FLUX.1 schnell, Cloudflare)", landing: "" };

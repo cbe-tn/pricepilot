@@ -45,12 +45,23 @@ import {
 } from "lucide-react";
 import { Badge, Button, Field, Input, Select } from "@/components/ui";
 import { drawPoster, type Box, type PosterAssets } from "@/components/marketing/render";
-import { deleteUploadAction, generateSceneAction, refreshPhotoAction, saveCampaignAction, uploadImageAction, validateCampaignAction } from "@/lib/marketing-actions";
+import {
+  deleteUploadAction,
+  generateAiImageAction,
+  generateSceneAction,
+  refreshPhotoAction,
+  saveCampaignAction,
+  uploadImageAction,
+  validateCampaignAction,
+} from "@/lib/marketing-actions";
 import {
   BRAND_COLORS,
   checkPoster,
   fmt,
   applyEvent,
+  FORMATS,
+  formatFamily,
+  formatSize,
   MAX_LAYERS,
   normalizeDesign,
   POSTER_SIZE,
@@ -61,6 +72,7 @@ import {
   type LayerFont,
   type PosterDesign,
   type PosterElement,
+  type PosterFormat,
   type PosterLayer,
   type PosterProduct,
   type ShapeKind,
@@ -71,10 +83,17 @@ import { eventById, upcomingEvents } from "@/lib/events";
 type Version = { at: string; design: PosterDesign };
 type Upload = { id: string; url: string; name: string };
 type Pt = { x: number; y: number };
-type Tab = "layers" | "style" | "texts" | "price" | "images" | "export";
+type Tab = "layers" | "style" | "ai" | "texts" | "price" | "images" | "export";
+type AiConfig = {
+  enabled: boolean;
+  perDay: number;
+  ambiances: Array<{ id: string; label: string }>;
+  styles: Array<{ id: string; label: string }>;
+  ideas: Record<"background" | "element", Array<{ id: string; label: string }>>;
+  generated: SceneResult[];
+};
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
-const S = POSTER_SIZE;
 const RAD = Math.PI / 180;
 const HOME: ElementLayout = { dx: 0, dy: 0, scale: 1, rot: 0 };
 const BUILTINS: PosterElement[] = ["title", "products", "price", "benefits"];
@@ -172,7 +191,7 @@ export function PosterEditor({
   initialProducts: PosterProduct[];
   uploads: Upload[];
   fonts: PosterAssets["fonts"];
-  ai: { enabled: boolean; perDay: number; ambiances: Array<{ id: string; label: string }>; generated: SceneResult[] };
+  ai: AiConfig;
 }) {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -200,7 +219,8 @@ export function PosterEditor({
   const [uploads, setUploads] = useState<Upload[]>(initialUploads);
   const [uploading, setUploading] = useState(false);
   const [zoom, setZoom] = useState(1);
-  const [fit, setFit] = useState(560);
+  const [stageSize, setStageSize] = useState({ w: 560, h: 560 });
+  const [layouts, setLayouts] = useState<Partial<Record<PosterElement, ElementLayout>>>({});
   const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
   const [shapeMenu, setShapeMenu] = useState(false);
   const gesture = useRef<Gesture | null>(null);
@@ -213,6 +233,7 @@ export function PosterEditor({
   const [assets, setAssets] = useState<PosterAssets | null>(null);
   const [layerImages, setLayerImages] = useState<Map<string, HTMLImageElement | null>>(new Map());
   const drawAssets = useMemo(() => (assets ? { ...assets, layerImages } : null), [assets, layerImages]);
+  const { w: FW, h: FH } = formatSize(design.format);
 
   const check = useMemo(() => {
     const c = checkPoster(design, products);
@@ -321,6 +342,7 @@ export function PosterEditor({
     const res = drawPoster(ctx, design, products, check.pricing, drawAssets);
     setBoxes(res.boxes);
     setRenderWarnings(res.warnings);
+    setLayouts(res.layouts);
   }, [design, products, check.pricing, drawAssets]);
 
   // ---------- zoom ----------
@@ -329,17 +351,19 @@ export function PosterEditor({
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect;
-      setFit(Math.max(240, Math.min(width - 48, height - 48, S)));
+      setStageSize({ w: Math.max(200, width - 48), h: Math.max(200, height - 48) });
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const display = fit * zoom;
-  const k = display / S;
+  const fitW = Math.min(stageSize.w, (stageSize.h * FW) / FH, FW);
+  const displayW = fitW * zoom;
+  const displayH = (displayW * FH) / FW;
+  const k = displayW / FW;
 
   const toPoster = (clientX: number, clientY: number): Pt => {
     const r = sheetRef.current!.getBoundingClientRect();
-    return { x: ((clientX - r.left) * S) / r.width, y: ((clientY - r.top) * S) / r.height };
+    return { x: ((clientX - r.left) * FW) / r.width, y: ((clientY - r.top) * FH) / r.height };
   };
 
   // ---------- selection helpers ----------
@@ -366,18 +390,19 @@ export function PosterEditor({
   const snap = (b: Box, dx: number, dy: number, off: boolean) => {
     if (off) return { dx, dy, v: [] as number[], h: [] as number[] };
     const th = 8 / Math.max(k, 0.2);
-    const targets = [0, S / 2, S];
+    const tx = [0, FW / 2, FW];
+    const ty = [0, FH / 2, FH];
     const v: number[] = [];
     const h: number[] = [];
     for (const xs of [b.x + dx, b.x + b.w / 2 + dx, b.x + b.w + dx]) {
-      const t = targets.find((t) => Math.abs(xs - t) < th);
+      const t = tx.find((t) => Math.abs(xs - t) < th);
       if (t != null && !v.length) {
         dx += t - xs;
         v.push(t);
       }
     }
     for (const ys of [b.y + dy, b.y + b.h / 2 + dy, b.y + b.h + dy]) {
-      const t = targets.find((t) => Math.abs(ys - t) < th);
+      const t = ty.find((t) => Math.abs(ys - t) < th);
       if (t != null && !h.length) {
         dy += t - ys;
         h.push(t);
@@ -456,7 +481,8 @@ export function PosterEditor({
         let delta: Pt = { x: dx, y: dy };
         // A product photo moves inside the products block: convert to the block's own frame.
         if (g.key.startsWith("product:")) {
-          const parent = layoutFor(d0, "products");
+          // Effective layout of the block (automatic arrangement of the format × user changes).
+          const parent = { ...HOME, ...(layouts.products ?? layoutFor(d0, "products")) };
           delta = rotate(delta, -(parent.rot ?? 0));
           delta = { x: delta.x / parent.scale, y: delta.y / parent.scale };
         }
@@ -516,7 +542,7 @@ export function PosterEditor({
 
   const addText = (preset: "title" | "body" | "badge" | "arabic" = "title") => {
     const dark = ["premium", "neon", "aurora", "scene", "split"].includes(design.theme);
-    const base = { kind: "text" as const, x: S / 2, y: S / 2, w: 720, h: 100, align: "center" as const, uppercase: false, strokeW: 0, stroke: "#000000", bg: "" };
+    const base = { kind: "text" as const, x: FW / 2, y: FH / 2, w: Math.min(720, FW * 0.8), h: 100, align: "center" as const, uppercase: false, strokeW: 0, stroke: "#000000", bg: "" };
     if (preset === "body") addLayer({ ...base, name: "Texte", text: "Votre texte ici", font: "latin", size: 44, weight: 600, color: dark ? "#ffffff" : "#111111" });
     else if (preset === "badge") addLayer({ ...base, name: "Étiquette", w: 420, text: "NOUVEAU", font: "latin", size: 48, weight: 900, color: "#ffffff", bg: design.accent, uppercase: true, shadow: true });
     else if (preset === "arabic") addLayer({ ...base, name: "نص عربي", text: "عرض خاص", font: "arabic", size: 72, weight: 800, color: dark ? "#ffffff" : design.accent });
@@ -528,15 +554,33 @@ export function PosterEditor({
     const dims: Record<ShapeKind, [number, number]> = { rect: [420, 260], ellipse: [300, 300], burst: [280, 280], ribbon: [620, 110], line: [520, 10] };
     const [w, h] = dims[shape];
     const label = SHAPES.find((s) => s.value === shape)!.label;
-    addLayer({ kind: "shape", name: label, shape, x: S / 2, y: S / 2, w, h, fill: shape === "burst" ? "#ffd400" : design.accent, fill2: "", stroke: "#ffffff", strokeW: 0, radius: shape === "rect" ? 28 : 0, shadow: shape !== "line" });
+    addLayer({ kind: "shape", name: label, shape, x: FW / 2, y: FH / 2, w, h, fill: shape === "burst" ? "#ffd400" : design.accent, fill2: "", stroke: "#ffffff", strokeW: 0, radius: shape === "rect" ? 28 : 0, shadow: shape !== "line" });
   };
 
-  const addImage = async (img: Upload) => {
+  const addImage = async (img: Upload, opts?: { removeBg?: boolean }) => {
     const el = layerImages.get(img.url) ?? (await loadImage(img.url));
     if (el) setLayerImages((m) => new Map(m).set(img.url, el));
     const ratio = el && el.naturalWidth ? el.naturalHeight / el.naturalWidth : 1;
-    const w = Math.min(520, el?.naturalWidth || 520);
-    addLayer({ kind: "image", name: img.name || "Image", src: img.url, x: S / 2, y: S / 2, w, h: Math.round(w * ratio), radius: 0, flipX: false, removeBg: false });
+    const w = Math.min(520, FW * 0.5, (FH * 0.7) / ratio, el?.naturalWidth || 520);
+    addLayer({ kind: "image", name: img.name || "Image", src: img.url, x: FW / 2, y: FH / 2, w: Math.round(w), h: Math.round(w * ratio), radius: 0, flipX: false, removeBg: Boolean(opts?.removeBg) });
+  };
+
+  // New format: blocks go back to the automatic arrangement, free layers keep their relative place.
+  const changeFormat = (format: PosterFormat) => {
+    const prev = formatSize(design.format);
+    const next = formatSize(format);
+    const wide = formatFamily(format) === "wide";
+    const hidden = design.hidden.filter((h) => h !== "footer");
+    update({
+      format,
+      layout: { title: HOME, products: HOME, price: HOME, benefits: HOME },
+      productLayout: {},
+      // The contact / call-to-action corner has no room on a 400-600 px high banner (it can be shown again).
+      hidden: wide ? [...hidden, "footer"] : hidden,
+      layers: design.layers.map((l) => ({ ...l, x: Math.round((l.x * next.w) / prev.w), y: Math.round((l.y * next.h) / prev.h) })),
+    });
+    setZoom(1);
+    setSelected(null);
   };
 
   const onFiles = async (files: FileList | File[] | null) => {
@@ -685,7 +729,7 @@ export function PosterEditor({
       if (!blob) return;
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = posterFileName(name);
+      a.download = posterFileName(name, FW, FH);
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     }, "image/png");
@@ -720,6 +764,7 @@ export function PosterEditor({
   const tabs: Array<{ id: Tab; label: string; icon: ReactNode; badge?: number }> = [
     { id: "layers", label: "Calques", icon: <Layers size={15} /> },
     { id: "style", label: "Style", icon: <LayoutTemplate size={15} /> },
+    { id: "ai", label: "IA", icon: <Sparkles size={15} /> },
     { id: "texts", label: "Textes", icon: <Type size={15} /> },
     { id: "price", label: "Prix", icon: <Tag size={15} /> },
     { id: "images", label: "Images", icon: <Images size={15} /> },
@@ -753,7 +798,7 @@ export function PosterEditor({
             <ZoomOut size={15} />
           </DarkIcon>
           <button type="button" onClick={() => setZoom(1)} className="w-12 text-center text-xs tabular-nums text-[#aeb4bd] hover:text-white" title="Ajuster à l’écran">
-            {Math.round(display / 10.8)} %
+            {Math.round(k * 100)} %
           </button>
           <DarkIcon title="Zoomer" onClick={() => setZoom((z) => clamp(Math.round((z + 0.1) * 10) / 10, 0.3, 2.5))}>
             <ZoomIn size={15} />
@@ -762,6 +807,22 @@ export function PosterEditor({
             <Maximize size={14} />
           </DarkIcon>
         </div>
+        <select
+          value={design.format}
+          onChange={(e) => changeFormat(e.target.value as PosterFormat)}
+          title="Format de sortie"
+          className="h-9 rounded-md border border-[#30353d] bg-[#262a31] px-2 text-xs text-[#d9dde3] outline-none hover:border-[#4a505a] focus:border-[#0b8fa3]"
+        >
+          {[...new Set(FORMATS.map((f) => f.group))].map((g) => (
+            <optgroup key={g} label={g}>
+              {FORMATS.filter((f) => f.group === g).map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label} · {f.w}×{f.h}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${status === "validated" && !dirty ? "bg-[#0c6b4d]/30 text-[#6ee7b7]" : "bg-[#8a6100]/30 text-[#fcd34d]"}`}>
             {status === "validated" && !dirty ? "Validée" : dirty ? "Non enregistrée" : "Brouillon"}
@@ -782,7 +843,7 @@ export function PosterEditor({
             type="button"
             disabled={!canDownload}
             onClick={download}
-            title={canDownload ? "PNG 1080 × 1080" : "Validez l'affiche pour la télécharger"}
+            title={canDownload ? `PNG ${FW} × ${FH}` : "Validez l'affiche pour la télécharger"}
             className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#d4a017] px-3 text-sm font-semibold text-[#3b2a00] hover:bg-[#c09210] disabled:opacity-40"
           >
             <Download size={15} /> PNG
@@ -810,6 +871,9 @@ export function PosterEditor({
           </RailButton>
           <RailButton title="Étiquette (texte sur fond)" onClick={() => addText("badge")}>
             <Tag size={18} />
+          </RailButton>
+          <RailButton title="Générer une image avec l’IA" active={tab === "ai"} onClick={() => setTab("ai")}>
+            <Sparkles size={18} />
           </RailButton>
           <div className="mx-1 my-1 border-l border-[#30353d] lg:mx-0 lg:border-l-0 lg:border-t" />
           <RailButton title="Surprends-moi : style et couleur au hasard" onClick={surprise}>
@@ -856,8 +920,8 @@ export function PosterEditor({
           }}
         >
           <div className="p-6">
-            <div ref={sheetRef} className="relative shadow-[0_20px_60px_rgba(0,0,0,0.55)]" style={{ width: display, height: display }} onPointerDown={onSheetPointerDown}>
-              <canvas ref={canvasRef} width={S} height={S} className="block h-full w-full touch-none select-none" aria-label="Aperçu de l'affiche 1080 × 1080" />
+            <div ref={sheetRef} className="relative shadow-[0_20px_60px_rgba(0,0,0,0.55)]" style={{ width: displayW, height: displayH }} onPointerDown={onSheetPointerDown}>
+              <canvas ref={canvasRef} width={FW} height={FH} className="block h-full w-full touch-none select-none" aria-label={`Aperçu ${FW} × ${FH}`} />
               {/* Snapping guides */}
               {guides.v.map((x) => (
                 <div key={`v${x}`} className="pointer-events-none absolute top-0 h-full w-px bg-[#ff3ea5]" style={{ left: x * k }} />
@@ -917,7 +981,7 @@ export function PosterEditor({
 
         {/* ---------- right panel ---------- */}
         <div className="flex max-h-[min(78vh,820px)] min-h-[420px] flex-col border-t border-[#262a31] bg-[#f6f8f9] lg:border-l lg:border-t-0">
-          <div className="grid grid-cols-6 border-b border-[#dfe7ea] bg-white">
+          <div className="grid grid-cols-7 border-b border-[#dfe7ea] bg-white">
             {tabs.map((t) => (
               <button
                 key={t.id}
@@ -1035,6 +1099,28 @@ export function PosterEditor({
 
             {tab === "style" ? (
               <div className="grid gap-3">
+                <Section title="Format">
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {FORMATS.map((f) => (
+                      <button
+                        key={f.value}
+                        type="button"
+                        onClick={() => changeFormat(f.value)}
+                        className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left text-xs ${design.format === f.value ? "border-[#0b8fa3] bg-[#e9f6f8]" : "border-[#e1eaed] bg-white hover:border-[#0b4a56]"}`}
+                      >
+                        <span className="grid h-7 w-7 shrink-0 place-items-center">
+                          <span className="block rounded-[2px] border-2 border-[#0b4a56]" style={{ width: f.w >= f.h ? 26 : (26 * f.w) / f.h, height: f.h >= f.w ? 26 : (26 * f.h) / f.w }} />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold text-[#1d3a41]">{f.label}</span>
+                          <span className="text-[10px] text-[#6b858c]">
+                            {f.group} · {f.w}×{f.h}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </Section>
                 <Section title="Marque, langue et couleur">
                   <div className="grid gap-2 sm:grid-cols-2">
                     <Field label="Langue">
@@ -1077,10 +1163,32 @@ export function PosterEditor({
                 <Section title="Événement">
                   <EventPicker value={design.event} onChange={(id) => update(applyEvent(design, id, products))} />
                 </Section>
-                <Section title="Scène IA">
+              </div>
+            ) : null}
+
+            {tab === "ai" ? (
+              <div className="grid gap-3">
+                <Section title="Générer avec l’IA">
+                  <AiStudio
+                    campaignId={campaign.id}
+                    ai={ai}
+                    format={design.format}
+                    eventId={design.event}
+                    onBackground={(img) => {
+                      update({ scene: { url: img.url, thumb: img.url, title: img.name, creator: "Image générée par IA (Cloudflare Workers AI)", landing: "" }, theme: "scene" });
+                      setServerMsg({ tone: "ok", text: "Fond IA appliqué (style « Scène IA »)." });
+                    }}
+                    onElement={(img) => {
+                      setUploads((u) => [img, ...u]);
+                      void addImage(img, { removeBg: true });
+                    }}
+                  />
+                </Section>
+                <Section title="Ambiances prêtes (fond pour les produits)">
                   <AiScenePanel
                     campaignId={campaign.id}
                     ai={ai}
+                    format={design.format}
                     current={design.scene}
                     reflection={design.reflection}
                     onReflection={(reflection) => update({ reflection })}
@@ -1288,7 +1396,7 @@ export function PosterEditor({
                     </Button>
                     <Badge tone={status === "validated" && !dirty ? "ok" : "warn"}>{status === "validated" && !dirty ? "Validée" : dirty ? "Non enregistrée" : "Brouillon"}</Badge>
                   </div>
-                  <p className="mt-2 text-[11px] text-[#6b858c]">L’aperçu est le fichier exporté : PNG 1080 × 1080 px.</p>
+                  <p className="mt-2 text-[11px] text-[#6b858c]">L’aperçu est le fichier exporté : PNG {FW} × {FH} px.</p>
                 </Section>
                 <Section title="Versions précédentes">
                   {versions.length ? (
@@ -1777,6 +1885,7 @@ function StyleGallery({
   onPick: (theme: PosterDesign["theme"]) => void;
 }) {
   const refs = useRef(new Map<string, HTMLCanvasElement>());
+  const { w: fw, h: fh } = formatSize(design.format);
   useEffect(() => {
     if (!assets) return;
     // Debounced: typing in a text field should not repaint nine posters on every key.
@@ -1784,15 +1893,15 @@ function StyleGallery({
       for (const t of THEMES) {
         const ctx = refs.current.get(t.value)?.getContext("2d");
         if (!ctx) continue;
-        ctx.setTransform(THUMB / POSTER_SIZE, 0, 0, THUMB / POSTER_SIZE, 0, 0);
+        ctx.setTransform(THUMB / fw, 0, 0, THUMB / fw, 0, 0);
         drawPoster(ctx, { ...design, theme: t.value }, products, pricing, assets);
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [design, products, pricing, assets]);
+  }, [design, products, pricing, assets, fw]);
 
   return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+    <div className={`grid gap-2 ${fw / fh > 1.6 ? "grid-cols-2" : "grid-cols-3"}`}>
       {THEMES.map((t) => (
         <button
           key={t.value}
@@ -1806,8 +1915,8 @@ function StyleGallery({
               else refs.current.delete(t.value);
             }}
             width={THUMB}
-            height={THUMB}
-            className="block aspect-square w-full"
+            height={Math.round((THUMB * fh) / fw)}
+            className="block w-full"
           />
           <span className="block px-2 py-1 text-[11px] font-medium">{t.label}</span>
         </button>
@@ -1851,13 +1960,15 @@ type SceneResult = { url: string; thumb: string; title: string; creator: string;
 function AiScenePanel({
   campaignId,
   ai,
+  format,
   current,
   reflection,
   onReflection,
   onPick,
 }: {
   campaignId: string;
-  ai: { enabled: boolean; perDay: number; ambiances: Array<{ id: string; label: string }>; generated: SceneResult[] };
+  ai: AiConfig;
+  format: PosterFormat;
   current: SceneResult | null;
   reflection: boolean;
   onReflection: (on: boolean) => void;
@@ -1872,7 +1983,7 @@ function AiScenePanel({
   const generate = () =>
     start(async () => {
       setMsg(null);
-      const res = await generateSceneAction(campaignId, ambiance, details);
+      const res = await generateSceneAction(campaignId, ambiance, details, format);
       if (!res.ok) return setMsg({ tone: "bad", text: res.error });
       setGenerated((g) => [res.scene, ...g]);
       onPick(res.scene);
@@ -1931,6 +2042,140 @@ function AiScenePanel({
       <label className="mt-3 flex items-center gap-2 text-sm">
         <input type="checkbox" checked={reflection} onChange={(e) => onReflection(e.target.checked)} /> Reflet du produit sur la surface
       </label>
+    </div>
+  );
+}
+
+/**
+ * "Générer avec l'IA": describe an image (or pick an idea and a style); it becomes the background of the
+ * current format (poster, story, website banner…) or a picture layer cut out from its white background.
+ */
+function AiStudio({
+  campaignId,
+  ai,
+  format,
+  eventId,
+  onBackground,
+  onElement,
+}: {
+  campaignId: string;
+  ai: AiConfig;
+  format: PosterFormat;
+  eventId: string;
+  onBackground: (img: Upload) => void;
+  onElement: (img: Upload) => void;
+}) {
+  const [purpose, setPurpose] = useState<"background" | "element">("background");
+  const [styleId, setStyleId] = useState(ai.styles[0]?.id ?? "photo");
+  const [ideaId, setIdeaId] = useState<string | null>(null);
+  const [text, setText] = useState("");
+  const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+  const [results, setResults] = useState<Array<Upload & { purpose: "background" | "element" }>>([]);
+  const [pending, start] = useTransition();
+  const f = FORMATS.find((x) => x.value === format) ?? FORMATS[0];
+
+  const generate = () =>
+    start(async () => {
+      setMsg(null);
+      const res = await generateAiImageAction(campaignId, { text, ideaId: ideaId ?? undefined, styleId, purpose, format, eventId });
+      if (!res.ok) return setMsg({ tone: "bad", text: res.error });
+      setResults((r) => [{ ...res.image, purpose: res.purpose }, ...r].slice(0, 12));
+      if (res.purpose === "background") onBackground(res.image);
+      else onElement(res.image);
+      setMsg({ tone: "ok", text: `${res.purpose === "background" ? "Fond appliqué" : "Image ajoutée en calque (détourée)"} — encore ${res.left} génération(s) aujourd’hui.` });
+    });
+
+  if (!ai.enabled) {
+    return (
+      <div className="rounded-lg bg-[#fff4d6] p-3 text-xs text-[#8a6100]">
+        Génération IA pas encore activée. C’est gratuit : créez un compte Cloudflare (sans carte bancaire), puis ajoutez sur Vercel les variables
+        <code className="mx-1">CLOUDFLARE_ACCOUNT_ID</code>et<code className="mx-1">CLOUDFLARE_AI_TOKEN</code>(jeton « Workers AI ») et redéployez.
+      </div>
+    );
+  }
+  const chip = (on: boolean) => `rounded-full border px-2.5 py-1 text-[11px] font-semibold ${on ? "border-[#0b8fa3] bg-[#0b8fa3] text-white" : "border-[#d7e3e6] bg-white text-[#0b4a56] hover:border-[#0b8fa3]"}`;
+  return (
+    <div className="grid gap-3">
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#eef3f5] p-1">
+        {(
+          [
+            ["background", "Fond de l’affiche"],
+            ["element", "Image à ajouter"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              setPurpose(id);
+              setIdeaId(null);
+            }}
+            className={`rounded-md py-1.5 text-xs font-semibold ${purpose === id ? "bg-white text-[#0b4a56] shadow" : "text-[#5c747a]"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-[#6b858c]">
+        {purpose === "background"
+          ? `Fond plein cadre au format ${f.label} (${f.w}×${f.h}), avec de la place pour le titre et les produits.`
+          : "Objet seul sur fond blanc, ajouté comme calque et détouré automatiquement (plante, cadeau, ballons…)."}
+      </p>
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#6b858c]">Idées</div>
+        <div className="flex flex-wrap gap-1">
+          {ai.ideas[purpose].map((i) => (
+            <button key={i.id} type="button" onClick={() => setIdeaId(ideaId === i.id ? null : i.id)} className={chip(ideaId === i.id)}>
+              {i.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <textarea
+        value={text}
+        maxLength={300}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={
+          purpose === "background"
+            ? "Ou décrivez votre fond (anglais conseillé) : e.g. red and gold gradient with light rays, modern living room at night…"
+            : "Ou décrivez l’objet : e.g. stack of gift boxes, a cactus in a pot…"
+        }
+        className="min-h-[64px] w-full rounded-lg border border-[#d7e3e6] bg-white px-2 py-1.5 text-sm outline-none focus:border-[#0b8fa3]"
+      />
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#6b858c]">Style</div>
+        <div className="flex flex-wrap gap-1">
+          {ai.styles.map((st) => (
+            <button key={st.id} type="button" onClick={() => setStyleId(st.id)} className={chip(styleId === st.id)}>
+              {st.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <Button onClick={generate} disabled={pending || (!text.trim() && !ideaId)}>
+        <Sparkles size={15} /> {pending ? "Génération… (10 à 30 s)" : "Générer l’image"}
+      </Button>
+      {msg ? <p className={`text-xs ${msg.tone === "ok" ? "text-[#0c6b4d]" : "text-[#b42323]"}`}>{msg.text}</p> : null}
+      {results.length ? (
+        <div className="grid grid-cols-3 gap-2">
+          {results.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              title={r.purpose === "background" ? "Appliquer comme fond" : "Ajouter à nouveau en calque"}
+              onClick={() => (r.purpose === "background" ? onBackground(r) : onElement(r))}
+              className="overflow-hidden rounded-lg border border-[#e3ecee] bg-white hover:border-[#0b8fa3]"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={r.url} alt={r.name} className="block aspect-square w-full object-cover" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <p className="text-[11px] text-[#6b858c]">
+        Gratuit ({ai.perDay} images par jour, Cloudflare Workers AI). Seule votre description est envoyée : jamais de nom de produit, de prix ni de logo. Les prix et photos produits restent ceux du
+        catalogue.
+      </p>
     </div>
   );
 }

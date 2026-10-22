@@ -9,13 +9,17 @@ import { marketingAssets, marketingCampaigns, products } from "@/db/schema";
 import { PURCHASING_PATH, getAuth, isPurchasingOnly, writeAudit } from "@/lib/auth";
 import { loadPosterProducts, officialPhotoUrl } from "@/lib/marketing";
 import { defaultSceneQuery, TN_EVENTS } from "@/lib/events";
-import { AI_SCENES_PER_DAY, AMBIANCES, aiScenesConfigured, buildScenePrompt, generateSceneImage } from "@/lib/ai-scenes";
+import { AI_IDEAS, AI_SCENES_PER_DAY, AI_STYLES, AMBIANCES, aiScenesConfigured, aiSizeFor, buildImagePrompt, buildScenePrompt, generateImage, type AiPurpose } from "@/lib/ai-scenes";
 import { SCENE_URL } from "@/lib/scenes";
 import {
   applyEvent,
   BRAND_COLORS,
   checkPoster,
   defaultDesign,
+  AI_IMAGE_PREFIX,
+  FORMATS,
+  formatFamily,
+  formatSize,
   HIDEABLE,
   LAYER_SRC,
   MAX_LAYERS,
@@ -80,6 +84,7 @@ const layerSchema = z.object({
   strokeW: z.number().min(0).max(60).optional(),
 });
 const designSchema = z.object({
+  format: z.enum(FORMATS.map((f) => f.value) as [PosterDesign["format"], ...PosterDesign["format"][]]),
   brand: z.enum(["numedia", "cbe"]),
   lang: z.enum(["fr", "ar", "bi"]),
   theme: z.enum(THEMES.map((t) => t.value) as [PosterDesign["theme"], ...PosterDesign["theme"][]]),
@@ -251,7 +256,7 @@ type GenerateResult = { ok: true; scene: PosterScene; left: number } | { ok: fal
  * Generates an empty, product-free background with the free Cloudflare AI tier and stores it for the
  * campaign. Only the ambiance, the event mood and optional details are sent — never prices or names.
  */
-export async function generateSceneAction(campaignId: string, ambianceId: string, details: string): Promise<GenerateResult> {
+export async function generateSceneAction(campaignId: string, ambianceId: string, details: string, format?: string): Promise<GenerateResult> {
   const auth = await mustAuth();
   const campaign = await ownCampaign(auth.workspace.id, campaignId);
   if (!campaign) return { ok: false, error: "Campagne introuvable." };
@@ -266,8 +271,10 @@ export async function generateSceneAction(campaignId: string, ambianceId: string
 
   const facts = await loadPosterProducts(auth.workspace.id, campaign.productIds);
   const design = campaign.design as Partial<PosterDesign>;
-  const prompt = buildScenePrompt({ ambianceId, sceneQuery: defaultSceneQuery(facts), eventId: design.event, details: String(details ?? "") });
-  const gen = await generateSceneImage(prompt);
+  const fmt = FORMATS.find((f) => f.value === format)?.value ?? design.format;
+  const prompt = buildScenePrompt({ ambianceId, sceneQuery: defaultSceneQuery(facts), eventId: design.event, details: String(details ?? ""), family: formatFamily(fmt) });
+  const { w, h } = formatSize(fmt);
+  const gen = await generateImage(prompt, aiSizeFor(w, h));
   if (!gen.ok) return gen;
   const [asset] = await db
     .insert(marketingAssets)
@@ -316,6 +323,55 @@ export async function deleteUploadAction(assetId: string): Promise<{ ok: boolean
   if (!/^[0-9a-f-]{36}$/i.test(String(assetId))) return { ok: false };
   await db
     .delete(marketingAssets)
-    .where(and(eq(marketingAssets.id, assetId), eq(marketingAssets.workspaceId, auth.workspace.id), sql`${marketingAssets.prompt} like ${UPLOAD_PREFIX + "%"}`));
+    .where(and(eq(marketingAssets.id, assetId), eq(marketingAssets.workspaceId, auth.workspace.id), sql`(${marketingAssets.prompt} like ${UPLOAD_PREFIX + "%"} or ${marketingAssets.prompt} like ${AI_IMAGE_PREFIX + "%"})`));
   return { ok: true };
+}
+
+type AiImageResult = { ok: true; purpose: AiPurpose; image: { id: string; url: string; name: string }; left: number } | { ok: false; error: string };
+
+/**
+ * "Générer avec l'IA": a full background for the current format (poster, website banner…) or a
+ * decorative picture to place as a layer. Only the user's description, a style and the event mood are
+ * sent to the model — never product names, prices or logos.
+ */
+export async function generateAiImageAction(
+  campaignId: string,
+  opts: { text: string; ideaId?: string; styleId?: string; purpose: AiPurpose; format: string; eventId?: string },
+): Promise<AiImageResult> {
+  const auth = await mustAuth();
+  const campaign = await ownCampaign(auth.workspace.id, campaignId);
+  if (!campaign) return { ok: false, error: "Campagne introuvable." };
+  if (!aiScenesConfigured()) return { ok: false, error: "Génération IA gratuite non configurée : ajoutez CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_AI_TOKEN sur Vercel." };
+  const purpose: AiPurpose = opts.purpose === "element" ? "element" : "background";
+  if (opts.styleId && !AI_STYLES.some((s) => s.id === opts.styleId)) return { ok: false, error: "Style inconnu." };
+  const idea = AI_IDEAS[purpose].find((i) => i.id === opts.ideaId);
+  if (!String(opts.text ?? "").trim() && !idea) return { ok: false, error: "Décrivez l’image ou choisissez une idée." };
+  const since = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+  const [{ used }] = await db
+    .select({ used: sql<number>`count(*)::int` })
+    .from(marketingAssets)
+    .where(and(eq(marketingAssets.workspaceId, auth.workspace.id), gte(marketingAssets.createdAt, since), notLike(marketingAssets.prompt, `${UPLOAD_PREFIX}%`)));
+  if (used >= AI_SCENES_PER_DAY) return { ok: false, error: `Limite de ${AI_SCENES_PER_DAY} images IA par jour atteinte — réessayez demain.` };
+
+  const format = FORMATS.find((f) => f.value === opts.format)?.value ?? "post";
+  const eventId = TN_EVENTS.some((e) => e.id === opts.eventId) ? opts.eventId : undefined;
+  const prompt = buildImagePrompt({ text: opts.text, ideaId: idea?.id, styleId: opts.styleId, purpose, family: formatFamily(format), eventId });
+  const { w, h } = formatSize(format);
+  // Pictures to place are square; backgrounds take the frame's proportions.
+  const gen = await generateImage(prompt, purpose === "element" ? null : aiSizeFor(w, h));
+  if (!gen.ok) return { ok: false, error: gen.error };
+  const label = (String(opts.text ?? "").trim() || idea?.label || "Image IA").slice(0, 40);
+  const [asset] = await db
+    .insert(marketingAssets)
+    .values({
+      workspaceId: auth.workspace.id,
+      campaignId: campaign.id,
+      // Backgrounds join the AI scenes gallery; pictures join the studio library.
+      prompt: purpose === "element" ? `${AI_IMAGE_PREFIX}${label}|${prompt}`.slice(0, 2000) : prompt,
+      mime: gen.mime,
+      dataBase64: gen.bytes.toString("base64"),
+    })
+    .returning({ id: marketingAssets.id });
+  await writeAudit(auth, "generate_ai_image", "marketing_campaign", campaign.id, { purpose, format, style: opts.styleId ?? "photo" });
+  return { ok: true, purpose, left: AI_SCENES_PER_DAY - used - 1, image: { id: asset.id, url: `/api/marketing/image?asset=${asset.id}`, name: `IA · ${label}` } };
 }

@@ -3,9 +3,24 @@
 // checked pricing object, never from free text; Arabic is shaped by the browser (direction = "rtl").
 // Each style (template) changes the layout, typography, photo treatment, price treatment and decor.
 import { eventById, type EventDecor } from "@/lib/events";
-import { POSTER_SIZE, type ElementLayout, type PosterDesign, type PosterLayer, type PosterPricing, type PosterProduct, type PosterTheme } from "@/lib/poster";
+import {
+  formatFamily,
+  formatSize,
+  POSTER_SIZE,
+  type ElementLayout,
+  type PosterDesign,
+  type PosterElement,
+  type PosterLayer,
+  type PosterPricing,
+  type PosterProduct,
+  type PosterTheme,
+} from "@/lib/poster";
 
+/** Template design space (1080 square). */
 const S = POSTER_SIZE;
+// Size of the canvas being painted (set by drawPoster; the composer is synchronous).
+let FW = S;
+let FH = S;
 
 export type FontKind = "latin" | "display" | "serif";
 export type PosterAssets = {
@@ -416,31 +431,44 @@ export const TEMPLATES: Record<PosterTheme, Template> = {
     tag: "pill",
     benefits: BUBBLES,
     background: (ctx, d, assets) => {
+      // Painted in frame pixels (FW × FH), not in the square design space.
       const img = assets.scene;
       if (img && img.naturalWidth) {
         // Cover-fit the photo, then darken top and bottom so texts and price stay readable.
-        const r = Math.max(S / img.naturalWidth, S / img.naturalHeight);
+        const r = Math.max(FW / img.naturalWidth, FH / img.naturalHeight);
         const w = img.naturalWidth * r;
         const h = img.naturalHeight * r;
-        ctx.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+        ctx.drawImage(img, (FW - w) / 2, (FH - h) / 2, w, h);
       } else {
-        const g = ctx.createLinearGradient(0, 0, S, S);
+        const g = ctx.createLinearGradient(0, 0, FW, FH);
         g.addColorStop(0, "#3b3f46");
         g.addColorStop(1, "#15171a");
         ctx.fillStyle = g;
-        ctx.fillRect(0, 0, S, S);
+        ctx.fillRect(0, 0, FW, FH);
       }
-      const top = ctx.createLinearGradient(0, 0, 0, 470);
-      top.addColorStop(0, "rgba(0,0,0,0.62)");
-      top.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = top;
-      ctx.fillRect(0, 0, S, 470);
-      const bottom = ctx.createLinearGradient(0, 700, 0, S);
+      const wide = FW / FH > 1.6;
+      if (wide) {
+        // Banners: texts sit on the left, so the shade comes from the left.
+        const left = ctx.createLinearGradient(0, 0, FW * 0.55, 0);
+        left.addColorStop(0, "rgba(0,0,0,0.6)");
+        left.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = left;
+        ctx.fillRect(0, 0, FW * 0.55, FH);
+      } else {
+        const topH = FH * 0.435;
+        const top = ctx.createLinearGradient(0, 0, 0, topH);
+        top.addColorStop(0, "rgba(0,0,0,0.62)");
+        top.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = top;
+        ctx.fillRect(0, 0, FW, topH);
+      }
+      const from = FH * 0.65;
+      const bottom = ctx.createLinearGradient(0, from, 0, FH);
       bottom.addColorStop(0, "rgba(0,0,0,0)");
       bottom.addColorStop(1, "rgba(0,0,0,0.72)");
       ctx.fillStyle = bottom;
-      ctx.fillRect(0, 700, S, S - 700);
-      glow(ctx, 540, 640, 420, hexA(d.accent, 0.12));
+      ctx.fillRect(0, from, FW, FH - from);
+      glow(ctx, FW / 2, FH * 0.6, Math.min(FW, FH) * 0.39, hexA(d.accent, 0.12));
     },
   },
 };
@@ -1067,7 +1095,7 @@ function drawTag(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAssets, t
     // Tilted ribbon, as on the yellow "PROMOWET" posters.
     ctx.font = font(assets, 900, 50, text, "latin", !AR.test(text));
     const w = ctx.measureText(text).width + 56;
-    ctx.translate(S - 44 - w / 2, 82);
+    ctx.translate(FW - 44 - w / 2, 82);
     ctx.rotate(-0.07);
     ctx.fillStyle = d.accent;
     ctx.fillRect(-w / 2, -38, w, 72);
@@ -1079,14 +1107,14 @@ function drawTag(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAssets, t
     ctx.letterSpacing = "6px";
     ctx.textAlign = "right";
     ctx.fillStyle = t.text;
-    ctx.fillText(text.toUpperCase(), S - 70, 84);
+    ctx.fillText(text.toUpperCase(), FW - 70, 84);
     const w = ctx.measureText(text.toUpperCase()).width;
     ctx.fillStyle = d.accent;
-    ctx.fillRect(S - 70 - w, 98, w, 4);
+    ctx.fillRect(FW - 70 - w, 98, w, 4);
   } else {
     ctx.font = font(assets, 800, 30, text);
     const w = ctx.measureText(text).width + 48;
-    roundRect(ctx, S - 44 - w, 46, w, 60, 30);
+    roundRect(ctx, FW - 44 - w, 46, w, 60, 30);
     if (t.tag === "outline") {
       ctx.strokeStyle = d.accent;
       ctx.lineWidth = 4;
@@ -1102,7 +1130,7 @@ function drawTag(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAssets, t
     }
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, S - 44 - w / 2, 77);
+    ctx.fillText(text, FW - 44 - w / 2, 77);
   }
   ctx.restore();
 }
@@ -1462,7 +1490,40 @@ function sticker(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAssets, l
 // Poster
 // ---------------------------------------------------------------------------------------------
 
-export type DrawResult = { boxes: Box[]; warnings: string[] };
+/** layouts = effective layout of each built-in element (automatic arrangement × user changes). */
+export type DrawResult = { boxes: Box[]; warnings: string[]; layouts: Record<PosterElement, ElementLayout> };
+
+type Frac = { x: number; y: number; w: number; h: number };
+// Where each block goes on non-square formats, as fractions of the frame.
+const ARRANGE: Record<"wide" | "tall", Record<PosterElement, Frac>> = {
+  wide: {
+    title: { x: 0.04, y: 0.2, w: 0.36, h: 0.42 },
+    benefits: { x: 0.04, y: 0.64, w: 0.34, h: 0.3 },
+    products: { x: 0.4, y: 0.05, w: 0.31, h: 0.9 },
+    price: { x: 0.72, y: 0.18, w: 0.26, h: 0.64 },
+  },
+  tall: {
+    title: { x: 0.07, y: 0.1, w: 0.86, h: 0.2 },
+    products: { x: 0.05, y: 0.31, w: 0.9, h: 0.4 },
+    benefits: { x: 0.05, y: 0.73, w: 0.42, h: 0.17 },
+    price: { x: 0.48, y: 0.74, w: 0.48, h: 0.17 },
+  },
+};
+
+/** Moves and scales a template block (drawn in the 1080 design space) into its place on the frame. */
+function arrange(d: PosterDesign, el: PosterElement, area: Rect): ElementLayout {
+  const fam = formatFamily(d.format);
+  if (fam === "square") return { dx: (FW - S) / 2, dy: (FH - S) / 2, scale: 1, rot: 0 };
+  const f = ARRANGE[fam][el];
+  const target = { x: f.x * FW, y: f.y * FH, w: f.w * FW, h: f.h * FH };
+  const scale = Math.min(target.w / area.w, target.h / area.h);
+  return { dx: target.x + target.w / 2 - (area.x + area.w / 2), dy: target.y + target.h / 2 - (area.y + area.h / 2), scale, rot: 0 };
+}
+
+function compose(auto: ElementLayout, user: ElementLayout | undefined): ElementLayout {
+  const u = user ?? HOME;
+  return { dx: auto.dx + u.dx, dy: auto.dy + u.dy, scale: auto.scale * u.scale, rot: (auto.rot ?? 0) + (u.rot ?? 0) };
+}
 
 export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[], pricing: PosterPricing, assets: PosterAssets): DrawResult {
   const warnings: string[] = [];
@@ -1470,13 +1531,27 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
   const t = TEMPLATES[d.theme] ?? TEMPLATES.studio;
   const ar = d.lang === "ar";
   const bi = d.lang === "bi";
+  ({ w: FW, h: FH } = formatSize(d.format));
   ctx.save();
-  ctx.clearRect(0, 0, S, S);
+  ctx.clearRect(0, 0, FW, FH);
   ctx.textBaseline = "alphabetic";
   ctx.direction = "ltr";
-  t.background(ctx, d, assets);
+  // Template decor is drawn in the square design space, scaled to cover the frame.
+  const cover = Math.max(FW, FH) / S;
+  const coverDecor = (draw: () => void) => {
+    ctx.save();
+    ctx.translate(FW / 2, FH / 2);
+    ctx.scale(cover, cover);
+    ctx.translate(-S / 2, -S / 2);
+    draw();
+    ctx.restore();
+  };
+  if (d.theme === "scene") t.background(ctx, d, assets);
+  else coverDecor(() => t.background(ctx, d, assets));
   const ev = eventById(d.event);
-  if (ev) drawEventDecor(ctx, d, ev.decor, ev.id);
+  if (ev) coverDecor(() => drawEventDecor(ctx, d, ev.decor, ev.id));
+  const layouts = {} as Record<PosterElement, ElementLayout>;
+  const L = (el: PosterElement, area: Rect) => (layouts[el] = compose(arrange(d, el, area), d.layout[el]));
   const hidden = new Set(d.hidden ?? []);
   boxes.push(...drawLayers(ctx, d, assets, true));
   if (!hidden.has("logo")) drawLogo(ctx, d, t, assets);
@@ -1491,7 +1566,7 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
   // ---------- Title block ----------
   const titleArea = t.title;
   if (!hidden.has("title")) {
-  const titleBox = withLayout(ctx, titleArea, d.layout.title, () => {
+  const titleBox = withLayout(ctx, titleArea, L("title", titleArea), () => {
     const rawMain = ar ? d.titleAr : d.title;
     const main = t.titleUpper && !AR.test(rawMain) ? rawMain.toUpperCase() : rawMain;
     const sub = ar ? d.subtitleAr || d.subtitle : d.subtitle;
@@ -1558,12 +1633,13 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
   const prodArea = t.products(hasBenefits && t.benefits.kind === "bubbles");
   const ordered = d.productOrder.map((id) => products.find((p) => p.id === id)).filter((p): p is PosterProduct => Boolean(p));
   const productBoxes: Box[] = [];
-  const prodBox = withLayout(ctx, prodArea, d.layout.products, () => {
+  const prodLayout = L("products", prodArea);
+  const prodBox = withLayout(ctx, prodArea, prodLayout, () => {
     const cells = productCells(prodArea, ordered.length);
     // Each photo can also be moved, resized and turned on its own inside the block.
     ordered.forEach((p, i) => {
       const own = withLayout(ctx, cells[i], d.productLayout?.[p.id] ?? HOME, () => drawProduct(ctx, d, t, assets, assets.photos.get(p.id), cells[i], i));
-      productBoxes.push({ key: `product:${p.id}`, ...nestedBox(prodArea, d.layout.products, own) });
+      productBoxes.push({ key: `product:${p.id}`, ...nestedBox(prodArea, prodLayout, own) });
     });
     // "+" between pack items.
     ctx.fillStyle = d.theme === "flash" ? FLASH_YELLOW : d.accent;
@@ -1580,7 +1656,7 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
     const bs = t.benefits;
     if (bs.kind === "bubbles") {
       const area: Rect = { x: bs.cx - bs.r, y: bs.y, w: bs.r * 2, h: bs.r * 2 * items.length + 16 * (items.length - 1) };
-      const b = withLayout(ctx, area, d.layout.benefits, () => {
+      const b = withLayout(ctx, area, L("benefits", area), () => {
         items.forEach(([fr, arTxt], i) => {
           const cy = bs.y + bs.r + i * (bs.r * 2 + 16);
           ctx.beginPath();
@@ -1616,7 +1692,7 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
       const pillH = two ? 84 : 54;
       const step = pillH + 12;
       const area: Rect = { x: bs.x, y: bs.y, w: bs.w, h: items.length * step - 12 };
-      const b = withLayout(ctx, area, d.layout.benefits, () => {
+      const b = withLayout(ctx, area, L("benefits", area), () => {
         items.forEach((pair, i) => {
           const y = bs.y + i * step;
           const lines = pair.filter(Boolean).map((txt) => {
@@ -1660,7 +1736,7 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
 
   // ---------- Price ----------
   if (pricing.price != null) {
-    const p = withLayout(ctx, t.price, d.layout.price, () => drawPrice(ctx, d, t, assets, pricing, t.price));
+    const p = withLayout(ctx, t.price, L("price", t.price), () => drawPrice(ctx, d, t, assets, pricing, t.price));
     boxes.push({ key: "price", ...p });
   }
 
@@ -1669,7 +1745,7 @@ export function drawPoster(ctx: Ctx, d: PosterDesign, products: PosterProduct[],
   boxes.push(...drawLayers(ctx, d, assets, false));
 
   ctx.restore();
-  return { boxes, warnings: [...new Set(warnings)] };
+  return { boxes, warnings: [...new Set(warnings)], layouts };
 }
 
 function drawFooter(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAssets, warnings: string[]) {
@@ -1677,7 +1753,7 @@ function drawFooter(ctx: Ctx, d: PosterDesign, t: Template, assets: PosterAssets
   const bi = d.lang === "bi";
   const footText = t.footOnAccent ? "#ffffff" : t.text;
   const footMuted = t.footOnAccent ? "rgba(255,255,255,0.88)" : t.muted;
-  let y = S - 40;
+  let y = FH - 40;
   ctx.textAlign = "left";
   const validity: string[] = [];
   if (d.validUntil) {

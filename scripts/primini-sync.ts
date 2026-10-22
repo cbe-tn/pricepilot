@@ -101,6 +101,8 @@ const sellerSlugByKey: Record<string, string> = {
   spacenet: "spacenet",
   tunisianet: "tunisianet",
   zoom: "zoom",
+  // zoom.com.tn appears on Primini under its company name.
+  zoominformatique: "zoom",
   graiet: "graiet",
   graiiet: "graiet",
   alarabia: "alarabia",

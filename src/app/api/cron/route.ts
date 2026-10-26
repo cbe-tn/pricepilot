@@ -1,4 +1,5 @@
 import { schedulerTick } from "@/lib/scheduler";
+import { runMailCheck } from "@/lib/supplier-mail-job";
 
 // Serverless trigger for the background scheduler (auto-match, our-site lookup, price monitoring).
 // Called every minute by Supabase pg_cron (or any cron) with `Authorization: Bearer <CRON_SECRET>`.
@@ -14,8 +15,10 @@ export async function GET(req: Request) {
     return new Response("Non autorisé", { status: 401 });
   }
   const started = Date.now();
-  const result = await schedulerTick({ budgetMs: BUDGET_MS });
-  return Response.json({ ...result, ms: Date.now() - started });
+  // Supplier price lists received by e-mail: at most every 10 minutes, one minute of the budget at most.
+  const mail = await runMailCheck({ deadline: started + 60_000 }).catch((e) => ({ ok: false, error: String(e) }));
+  const result = await schedulerTick({ budgetMs: BUDGET_MS - (Date.now() - started) });
+  return Response.json({ ...result, mail, ms: Date.now() - started });
 }
 
 export const POST = GET;

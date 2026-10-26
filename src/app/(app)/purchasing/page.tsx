@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { supplierPriceImports, suppliers, users } from "@/db/schema";
+import { supplierInbox, supplierPriceImports, suppliers, users } from "@/db/schema";
 import { SupplierImport } from "@/components/purchasing/SupplierImport";
+import { MailInbox } from "@/components/purchasing/MailInbox";
+import { mailAddress, mailConfigured } from "@/lib/supplier-mail";
+import { lastMailStatus } from "@/lib/supplier-mail-job";
 import { Badge, Button, Card, EmptyState, Input, PageHeader, Stat } from "@/components/ui";
 import { requirePageAuth } from "@/lib/page-auth";
 import { formatTnd, formatWhen } from "@/lib/money";
@@ -19,7 +22,7 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
   const onlyMulti = multi === "1";
   const query = q.trim().toLowerCase();
 
-  const [sups, imports, comparison] = await Promise.all([
+  const [sups, imports, comparison, inbox, mailStatus] = await Promise.all([
     db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).where(eq(suppliers.workspaceId, auth.workspace.id)).orderBy(suppliers.name),
     db
       .select({ imp: supplierPriceImports, supplierName: suppliers.name, uploader: users.fullName })
@@ -30,6 +33,30 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
       .orderBy(desc(supplierPriceImports.createdAt))
       .limit(30),
     buildSupplierComparison(auth.workspace.id),
+    // The file itself (data_base64) is not loaded for the list.
+    db
+      .select({
+        id: supplierInbox.id,
+        attachmentName: supplierInbox.attachmentName,
+        fromAddress: supplierInbox.fromAddress,
+        fromName: supplierInbox.fromName,
+        subject: supplierInbox.subject,
+        receivedAt: supplierInbox.receivedAt,
+        createdAt: supplierInbox.createdAt,
+        status: supplierInbox.status,
+        reason: supplierInbox.reason,
+        supplierId: supplierInbox.supplierId,
+        supplierName: suppliers.name,
+        priceBasis: supplierInbox.priceBasis,
+        rowCount: supplierInbox.rowCount,
+      })
+      .from(supplierInbox)
+      .leftJoin(suppliers, eq(suppliers.id, supplierInbox.supplierId))
+      .where(eq(supplierInbox.workspaceId, auth.workspace.id))
+      .orderBy(desc(supplierInbox.createdAt))
+      .limit(40)
+      .catch(() => []),
+    lastMailStatus().catch(() => null),
   ]);
 
   const { suppliers: cols, rows } = comparison;
@@ -64,6 +91,8 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
         <Stat label="Économie vs 2e meilleur" value={formatTnd(savings)} hint="Somme des écarts, 1 unité par article" tone={savings > 0 ? "ok" : undefined} />
         <Stat label="Le plus souvent moins cher" value={leader ? supplierName(leader[0]) : "—"} hint={leader ? `${leader[1]} article(s)` : undefined} />
       </div>
+
+      <MailInbox configured={mailConfigured()} address={mailAddress()} status={mailStatus} items={inbox} suppliers={sups} />
 
       <Card>
         <h2 className="mb-3 font-semibold">Importer une offre fournisseur</h2>
@@ -188,7 +217,7 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
                       {imp.fileName} <Badge>{imp.priceBasis.toUpperCase()}</Badge>
                     </td>
                     <td>{imp.rowCount}</td>
-                    <td>{uploader ?? "—"}</td>
+                    <td>{uploader ?? (imp.fileName.endsWith("(e-mail)") ? "E-mail (automatique)" : "—")}</td>
                     <td>
                       <form action={deleteSupplierImportAction}>
                         <input type="hidden" name="id" value={imp.id} />

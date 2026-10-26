@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["xlsx", "pg", "bcryptjs"],
+  serverExternalPackages: ["xlsx", "pg", "bcryptjs", "imapflow"],
   experimental: {
     // Server Actions default to a 1 MB body; stock imports (CSV/Excel) can be larger.
     serverActions: { bodySizeLimit: "25mb" },

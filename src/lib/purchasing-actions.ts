@@ -2,14 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { products, supplierPriceImports, supplierQuotes, suppliers } from "@/db/schema";
+import { supplierInbox, supplierPriceImports, suppliers } from "@/db/schema";
 import { getAuth, writeAudit } from "@/lib/auth";
-import { moneyStr, n, round3 } from "@/lib/money";
-import { matchProduct, productIndex } from "@/lib/purchasing";
-import { vatRateFor } from "@/lib/tax";
+import { importSupplierLines, supplierByName } from "@/lib/purchasing-import";
+import { parsePriceFile } from "@/lib/supplier-mail";
+import { runMailCheck } from "@/lib/supplier-mail-job";
 
 // Open to every role, including Acheteur.
 async function mustAuth() {
@@ -53,50 +53,22 @@ export async function saveSupplierImportAction(input: SaveImportInput): Promise<
   } else {
     const name = data.newSupplierName?.trim();
     if (!name) return { error: "Choisissez ou saisissez le fournisseur." };
-    const existing = await db
-      .select({ id: suppliers.id })
-      .from(suppliers)
-      .where(and(eq(suppliers.workspaceId, ws), sql`lower(${suppliers.name}) = lower(${name})`))
-      .limit(1);
-    supplierId = existing[0]?.id ?? (await db.insert(suppliers).values({ workspaceId: ws, name }).returning({ id: suppliers.id }))[0].id;
+    supplierId = await supplierByName(ws, name);
   }
 
-  const catalog = await db.select().from(products).where(eq(products.workspaceId, ws));
-  const idx = productIndex(catalog);
-  const expiresAt = data.validUntil ? new Date(`${data.validUntil}T23:59:59`) : null;
-
-  const [imp] = await db
-    .insert(supplierPriceImports)
-    .values({ workspaceId: ws, supplierId, fileName: data.fileName, priceBasis: data.basis, rowCount: data.lines.length, uploadedBy: auth.user.id })
-    .returning();
-
-  let matched = 0;
-  const values = data.lines.map((line) => {
-    const product = matchProduct(idx, line.ref, line.name);
-    if (product) matched++;
-    // Quotes are compared HT: TTC lists are converted with the article's VAT (7 % IT, 19 % otherwise).
-    const vat = product ? n(product.vatRate) : vatRateFor({ name: line.name });
-    const priceHt = data.basis === "ttc" ? round3(line.price / (1 + vat)) : line.price;
-    return {
-      workspaceId: ws,
-      supplierId: supplierId!,
-      importId: imp.id,
-      productId: product?.id ?? null,
-      productRef: line.ref || null,
-      productName: line.name || null,
-      quotedPrice: moneyStr(priceHt),
-      // Quantity available from the supplier, when the list gives one.
-      availability: line.qty !== null && line.qty >= 0 ? String(line.qty) : "in_stock",
-      expiresAt,
-    };
+  const { importId, count, matched } = await importSupplierLines({
+    workspaceId: ws,
+    userId: auth.user.id,
+    supplierId,
+    fileName: data.fileName,
+    basis: data.basis,
+    validUntil: data.validUntil,
+    lines: data.lines,
   });
-  for (let i = 0; i < values.length; i += 500) {
-    await db.insert(supplierQuotes).values(values.slice(i, i + 500));
-  }
-  await writeAudit(auth, "import_supplier_prices", "supplier_price_import", imp.id, { fileName: data.fileName, rows: values.length, matched });
+  await writeAudit(auth, "import_supplier_prices", "supplier_price_import", importId, { fileName: data.fileName, rows: count, matched });
   revalidatePath("/purchasing");
   revalidatePath("/suppliers");
-  return { ok: true, count: values.length, matched };
+  return { ok: true, count, matched };
 }
 
 export async function deleteSupplierImportAction(formData: FormData) {
@@ -107,4 +79,63 @@ export async function deleteSupplierImportAction(formData: FormData) {
   await writeAudit(auth, "delete_supplier_import", "supplier_price_import", id);
   revalidatePath("/purchasing");
   revalidatePath("/suppliers");
+}
+
+// ---------- price lists received by e-mail ----------
+
+async function inboxRow(workspaceId: string, id: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const [row] = await db.select().from(supplierInbox).where(and(eq(supplierInbox.id, id), eq(supplierInbox.workspaceId, workspaceId))).limit(1);
+  return row ?? null;
+}
+
+/** "Importer" on a file waiting in the e-mail list: same parser and import as the manual upload. */
+export async function importInboxItemAction(formData: FormData) {
+  const auth = await mustAuth();
+  const row = await inboxRow(auth.workspace.id, String(formData.get("id") ?? ""));
+  if (!row || row.status === "imported" || !row.dataBase64) return;
+  const basis = formData.get("basis") === "ttc" ? "ttc" : "ht";
+  const chosen = String(formData.get("supplierId") ?? "");
+  const newName = String(formData.get("newSupplierName") ?? "").trim().slice(0, 120);
+  let supplierId: string | null = null;
+  if (/^[0-9a-f-]{36}$/i.test(chosen)) {
+    const own = await db.select({ id: suppliers.id }).from(suppliers).where(and(eq(suppliers.id, chosen), eq(suppliers.workspaceId, auth.workspace.id))).limit(1);
+    supplierId = own[0]?.id ?? null;
+  } else if (newName) supplierId = await supplierByName(auth.workspace.id, newName);
+  if (!supplierId) {
+    await db.update(supplierInbox).set({ reason: "Choisissez le fournisseur avant d'importer." }).where(eq(supplierInbox.id, row.id));
+    revalidatePath("/purchasing");
+    return;
+  }
+  try {
+    const parsed = await parsePriceFile(Buffer.from(row.dataBase64, "base64"), row.attachmentName);
+    if (!parsed.lines.length) throw new Error("Aucune ligne de prix reconnue : importez ce fichier à la main pour choisir les colonnes.");
+    const imp = await importSupplierLines({ workspaceId: auth.workspace.id, userId: auth.user.id, supplierId, fileName: `${row.attachmentName} (e-mail)`, basis, lines: parsed.lines });
+    await db
+      .update(supplierInbox)
+      .set({ status: "imported", dataBase64: null, supplierId, importId: imp.importId, priceBasis: basis, rowCount: imp.count, reason: `${imp.matched} article(s) reconnu(s) dans le catalogue` })
+      .where(eq(supplierInbox.id, row.id));
+    await writeAudit(auth, "import_supplier_prices", "supplier_price_import", imp.importId, { fileName: row.attachmentName, rows: imp.count, matched: imp.matched, source: "email" });
+  } catch (e) {
+    await db
+      .update(supplierInbox)
+      .set({ reason: e instanceof Error ? e.message.slice(0, 300) : "Import impossible." })
+      .where(eq(supplierInbox.id, row.id));
+  }
+  revalidatePath("/purchasing");
+}
+
+export async function ignoreInboxItemAction(formData: FormData) {
+  const auth = await mustAuth();
+  const row = await inboxRow(auth.workspace.id, String(formData.get("id") ?? ""));
+  if (!row || row.status === "imported") return;
+  await db.update(supplierInbox).set({ status: "ignored", dataBase64: null }).where(eq(supplierInbox.id, row.id));
+  revalidatePath("/purchasing");
+}
+
+/** "Vérifier maintenant": reads the mailbox right away instead of waiting for the 10-minute check. */
+export async function checkMailNowAction() {
+  await mustAuth();
+  await runMailCheck({ force: true, deadline: Date.now() + 45_000 });
+  revalidatePath("/purchasing");
 }

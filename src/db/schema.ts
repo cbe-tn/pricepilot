@@ -497,6 +497,41 @@ export const supplierPriceImports = pgTable(
   (t) => [index("supplier_imports_workspace_idx").on(t.workspaceId)],
 );
 
+/**
+ * Supplier price lists received by e-mail (one row per attachment). Known supplier + clear columns are
+ * imported at once; the rest waits "à vérifier" with its file until the user imports or ignores it.
+ */
+export const supplierInbox = pgTable(
+  "supplier_inbox",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    messageId: text("message_id").notNull(),
+    attachmentName: text("attachment_name").notNull(),
+    fromAddress: text("from_address").notNull(),
+    fromName: text("from_name"),
+    subject: text("subject"),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    mime: text("mime").notNull(),
+    /** File kept only while the row waits for the user; cleared once imported or ignored. */
+    dataBase64: text("data_base64"),
+    /** imported · pending · ignored · error */
+    status: text("status").default("pending").notNull(),
+    reason: text("reason"),
+    supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    importId: uuid("import_id").references(() => supplierPriceImports.id, { onDelete: "set null" }),
+    priceBasis: text("price_basis"),
+    rowCount: integer("row_count"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("supplier_inbox_workspace_idx").on(t.workspaceId, t.createdAt),
+    uniqueIndex("supplier_inbox_message_idx").on(t.workspaceId, t.messageId, t.attachmentName),
+  ],
+);
+
 export const supplierQuotes = pgTable("supplier_quotes", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id")

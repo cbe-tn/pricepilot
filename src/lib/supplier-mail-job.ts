@@ -38,7 +38,7 @@ export async function lastMailStatus(): Promise<MailStatus | null> {
 function explain(e: unknown): string {
   const err = e as { authenticationFailed?: boolean; code?: string; message?: string; responseText?: string };
   if (err?.authenticationFailed || /AUTHENTICATIONFAILED|Invalid credentials/i.test(`${err?.responseText ?? ""} ${err?.message ?? ""}`)) {
-    return "Connexion refusée par la boîte e-mail : vérifiez MAIL_IMAP_USER et le mot de passe d'application (MAIL_IMAP_PASSWORD).";
+    return "Connexion refusée par la boîte e-mail : vérifiez MAIL_IMAP_USER et MAIL_IMAP_PASSWORD (et MAIL_IMAP_HOST pour une offre OVH Email Pro).";
   }
   if (err?.code === "ENOTFOUND" || err?.code === "ETIMEDOUT" || err?.code === "ECONNREFUSED") return "Serveur e-mail injoignable (MAIL_IMAP_HOST / MAIL_IMAP_PORT).";
   return (err?.message ?? "Erreur inconnue").slice(0, 300);

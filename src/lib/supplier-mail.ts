@@ -1,4 +1,4 @@
-// Supplier price lists received by e-mail. The mailbox (Gmail with an app password, or any IMAP box) is
+// Supplier price lists received by e-mail. The mailbox (contact@numedia.tn on OVH, Gmail, or any IMAP box) is
 // opened read-only: nothing is marked as read, moved, deleted or sent. Attachments (PDF, Word, Excel,
 // CSV) from known suppliers, or that look like a price list, are read with the same parser as the
 // manual upload. A known sender with clearly detected columns is imported at once; anything else waits
@@ -13,6 +13,15 @@ import { extractTables } from "@/lib/supplier-files";
 
 export const mailConfigured = () => Boolean(process.env.MAIL_IMAP_USER && process.env.MAIL_IMAP_PASSWORD);
 export const mailAddress = () => process.env.MAIL_IMAP_USER ?? null;
+
+/**
+ * IMAP server: MAIL_IMAP_HOST when set; otherwise Gmail for a Gmail address and OVH (numedia.tn mail,
+ * standard "MX Plan" offer) for anything else. OVH Email Pro uses pro1/pro2.mail.ovh.net instead.
+ */
+export function imapHost(): string {
+  if (process.env.MAIL_IMAP_HOST) return process.env.MAIL_IMAP_HOST.trim();
+  return /@(gmail|googlemail)\.com$/i.test(process.env.MAIL_IMAP_USER ?? "") ? "imap.gmail.com" : "ssl0.ovh.net";
+}
 
 const ALLOWED = /\.(xlsx|xlsm|xls|csv|ods|docx|pdf)$/i;
 const MAX_BYTES = 15 * 1024 * 1024;
@@ -121,13 +130,13 @@ export async function checkSupplierMail(opts?: { deadline?: number }): Promise<M
   const [ws] = await db.select().from(workspaces).limit(1);
   if (!ws) return { ...result, skipped: "Aucun espace de travail." };
   const directory = await supplierDirectory(ws.id);
-  const host = process.env.MAIL_IMAP_HOST || "imap.gmail.com";
+  const host = imapHost();
   const client = new ImapFlow({
     host,
     port: Number(process.env.MAIL_IMAP_PORT) || 993,
     secure: true,
-    // Google shows app passwords in groups of four letters: spaces are not part of it.
-    auth: { user: process.env.MAIL_IMAP_USER!, pass: process.env.MAIL_IMAP_PASSWORD!.replace(/\s+/g, "") },
+    // Google shows app passwords in groups of four letters (spaces are not part of it); other boxes keep it as typed.
+    auth: { user: process.env.MAIL_IMAP_USER!.trim(), pass: host.includes("gmail") ? process.env.MAIL_IMAP_PASSWORD!.replace(/\s+/g, "") : process.env.MAIL_IMAP_PASSWORD! },
     logger: false,
   });
   await client.connect();

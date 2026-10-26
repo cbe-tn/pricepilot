@@ -67,9 +67,9 @@ export function MailInbox({
 
       {!configured ? (
         <div className="rounded-lg bg-[#fff4d6] p-3 text-xs text-[#8a6100]">
-          Pour l’activer : créez un « mot de passe d’application » Google pour la boîte qui reçoit les listes (Compte Google → Sécurité → Validation en deux étapes →
-          Mots de passe des applications), puis ajoutez sur Vercel <code className="mx-1">MAIL_IMAP_USER</code> (l’adresse) et <code className="mx-1">MAIL_IMAP_PASSWORD</code>
-          (le mot de passe d’application) et redéployez. La boîte est lue en lecture seule : rien n’est marqué comme lu, déplacé, supprimé ni envoyé.
+          Pour l’activer : ajoutez sur Vercel <code className="mx-1">MAIL_IMAP_USER</code> (l’adresse qui reçoit les listes, par ex. contact@numedia.tn) et
+          <code className="mx-1">MAIL_IMAP_PASSWORD</code> (son mot de passe de messagerie OVH), puis redéployez. Offre OVH Email Pro : ajoutez aussi
+          <code className="mx-1">MAIL_IMAP_HOST</code> = pro1.mail.ovh.net. La boîte est lue en lecture seule : rien n’est marqué comme lu, déplacé, supprimé ni envoyé.
         </div>
       ) : status ? (
         <p className={`mb-3 text-xs ${status.ok ? "text-[#4d6a72]" : "text-[#b42323]"}`}>

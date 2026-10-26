@@ -3,7 +3,7 @@
 // CSV) from known suppliers, or that look like a price list, are read with the same parser as the
 // manual upload. A known sender with clearly detected columns is imported at once; anything else waits
 // "à vérifier" on the comparator page.
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { ImapFlow, type MessageStructureObject } from "imapflow";
 import { db } from "@/db";
 import { supplierInbox, suppliers, workspaces } from "@/db/schema";
@@ -146,6 +146,10 @@ export async function checkSupplierMail(opts?: { deadline?: number }): Promise<M
   const [ws] = await db.select().from(workspaces).limit(1);
   if (!ws) return { ...result, skipped: "Aucun espace de travail." };
   const directory = await supplierDirectory(ws.id);
+  // A check cut off mid-file (time limit, crash) leaves its claim behind: release it after 15 minutes.
+  await db
+    .delete(supplierInbox)
+    .where(and(eq(supplierInbox.workspaceId, ws.id), eq(supplierInbox.status, "processing"), lt(supplierInbox.createdAt, new Date(Date.now() - 15 * 60_000))));
   const host = imapHost();
   const client = new ImapFlow({
     host,
@@ -252,33 +256,49 @@ export async function checkSupplierMail(opts?: { deadline?: number }): Promise<M
           mime: att.mime,
           supplierId: supplier?.id ?? null,
         };
+        // Claim the file first (unique message + file name): two checks running at the same moment can
+        // never import it twice.
+        const [claimed] = retryId
+          ? await db
+              .update(supplierInbox)
+              .set({ status: "processing", supplierId: supplier?.id ?? null })
+              .where(and(eq(supplierInbox.id, retryId), eq(supplierInbox.status, "pending")))
+              .returning({ id: supplierInbox.id })
+          : await db.insert(supplierInbox).values({ ...base, status: "processing" }).onConflictDoNothing().returning({ id: supplierInbox.id });
+        if (!claimed) continue;
+        const rowId = claimed.id;
         try {
           const dl = await client.download(String(m.uid), att.part, { uid: true, maxBytes: MAX_BYTES });
           if (!dl.content) throw new Error("Pièce jointe introuvable.");
           const buffer = await readAll(dl.content);
           const parsed = await parsePriceFile(buffer, att.fileName);
           const doubt = doubtReason(supplier, parsed);
-          if (retryId) await db.delete(supplierInbox).where(eq(supplierInbox.id, retryId));
           if (!doubt && supplier) {
             const imp = await importSupplierLines({ workspaceId: ws.id, userId: null, supplierId: supplier.id, fileName: `${att.fileName} (e-mail)`, basis: parsed.basis, lines: parsed.lines });
-            await db.insert(supplierInbox).values({
-              ...base,
-              status: "imported",
-              importId: imp.importId,
-              priceBasis: parsed.basis,
-              rowCount: imp.count,
-              reason: `${forwardedBy ? `Transféré par ${forwardedBy} — ` : ""}${imp.matched} article(s) reconnu(s) dans le catalogue`,
-            });
+            await db
+              .update(supplierInbox)
+              .set({
+                status: "imported",
+                dataBase64: null,
+                importId: imp.importId,
+                priceBasis: parsed.basis,
+                rowCount: imp.count,
+                reason: `${forwardedBy ? `Transféré par ${forwardedBy} — ` : ""}${imp.matched} article(s) reconnu(s) dans le catalogue`,
+              })
+              .where(eq(supplierInbox.id, rowId));
             result.imported += 1;
           } else {
-            await db.insert(supplierInbox).values({ ...base, status: "pending", dataBase64: buffer.toString("base64"), priceBasis: parsed.basis, rowCount: parsed.lines.length, reason: doubt });
+            await db
+              .update(supplierInbox)
+              .set({ status: "pending", dataBase64: buffer.toString("base64"), priceBasis: parsed.basis, rowCount: parsed.lines.length, reason: doubt })
+              .where(eq(supplierInbox.id, rowId));
             result.pending += 1;
           }
         } catch (e) {
           await db
-            .insert(supplierInbox)
-            .values({ ...base, status: "error", reason: e instanceof Error ? e.message.slice(0, 300) : "Lecture impossible." })
-            .onConflictDoNothing();
+            .update(supplierInbox)
+            .set({ status: "error", reason: e instanceof Error ? e.message.slice(0, 300) : "Lecture impossible." })
+            .where(eq(supplierInbox.id, rowId));
           result.errors += 1;
         }
       }

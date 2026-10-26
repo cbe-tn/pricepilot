@@ -89,11 +89,23 @@ async function inboxRow(workspaceId: string, id: string) {
   return row ?? null;
 }
 
-/** "Importer" on a file waiting in the e-mail list: same parser and import as the manual upload. */
-export async function importInboxItemAction(formData: FormData) {
+export type InboxActionState = { ok: boolean; message: string } | null;
+
+/**
+ * "Importer" / "Ignorer" on a file waiting in the e-mail list (the clicked button sends op). Same parser
+ * and import as the manual upload; the file is claimed first so a double click never imports it twice.
+ */
+export async function inboxItemAction(_prev: InboxActionState, formData: FormData): Promise<InboxActionState> {
   const auth = await mustAuth();
   const row = await inboxRow(auth.workspace.id, String(formData.get("id") ?? ""));
-  if (!row || row.status === "imported" || !row.dataBase64) return;
+  if (!row) return { ok: false, message: "Fichier introuvable : rechargez la page." };
+  if (formData.get("op") === "ignore") {
+    if (row.status === "imported") return { ok: false, message: "Déjà importé." };
+    await db.update(supplierInbox).set({ status: "ignored", dataBase64: null }).where(eq(supplierInbox.id, row.id));
+    revalidatePath("/purchasing");
+    return { ok: true, message: "Ignoré." };
+  }
+  if (row.status !== "pending" || !row.dataBase64) return { ok: false, message: row.status === "imported" ? "Déjà importé." : "Ce fichier ne peut plus être importé : rechargez la page." };
   const basis = formData.get("basis") === "ttc" ? "ttc" : "ht";
   const chosen = String(formData.get("supplierId") ?? "");
   const newName = String(formData.get("newSupplierName") ?? "").trim().slice(0, 120);
@@ -102,35 +114,30 @@ export async function importInboxItemAction(formData: FormData) {
     const own = await db.select({ id: suppliers.id }).from(suppliers).where(and(eq(suppliers.id, chosen), eq(suppliers.workspaceId, auth.workspace.id))).limit(1);
     supplierId = own[0]?.id ?? null;
   } else if (newName) supplierId = await supplierByName(auth.workspace.id, newName);
-  if (!supplierId) {
-    await db.update(supplierInbox).set({ reason: "Choisissez le fournisseur avant d'importer." }).where(eq(supplierInbox.id, row.id));
-    revalidatePath("/purchasing");
-    return;
-  }
+  if (!supplierId) return { ok: false, message: "Choisissez le fournisseur (ou saisissez un nouveau nom) avant d'importer." };
+  const [claimed] = await db
+    .update(supplierInbox)
+    .set({ status: "processing" })
+    .where(and(eq(supplierInbox.id, row.id), eq(supplierInbox.status, "pending")))
+    .returning({ id: supplierInbox.id });
+  if (!claimed) return { ok: false, message: "Import déjà en cours ou terminé : rechargez la page." };
   try {
     const parsed = await parsePriceFile(Buffer.from(row.dataBase64, "base64"), row.attachmentName);
-    if (!parsed.lines.length) throw new Error("Aucune ligne de prix reconnue : importez ce fichier à la main pour choisir les colonnes.");
+    if (!parsed.lines.length) throw new Error("Aucune ligne de prix reconnue : importez ce fichier avec « Importer une offre fournisseur » pour choisir les colonnes.");
     const imp = await importSupplierLines({ workspaceId: auth.workspace.id, userId: auth.user.id, supplierId, fileName: `${row.attachmentName} (e-mail)`, basis, lines: parsed.lines });
     await db
       .update(supplierInbox)
       .set({ status: "imported", dataBase64: null, supplierId, importId: imp.importId, priceBasis: basis, rowCount: imp.count, reason: `${imp.matched} article(s) reconnu(s) dans le catalogue` })
       .where(eq(supplierInbox.id, row.id));
     await writeAudit(auth, "import_supplier_prices", "supplier_price_import", imp.importId, { fileName: row.attachmentName, rows: imp.count, matched: imp.matched, source: "email" });
+    revalidatePath("/purchasing");
+    return { ok: true, message: `${imp.count} ligne(s) importée(s), ${imp.matched} reconnue(s) dans le catalogue.` };
   } catch (e) {
-    await db
-      .update(supplierInbox)
-      .set({ reason: e instanceof Error ? e.message.slice(0, 300) : "Import impossible." })
-      .where(eq(supplierInbox.id, row.id));
+    const message = e instanceof Error ? e.message.slice(0, 300) : "Import impossible.";
+    await db.update(supplierInbox).set({ status: "pending", reason: message }).where(eq(supplierInbox.id, row.id));
+    revalidatePath("/purchasing");
+    return { ok: false, message };
   }
-  revalidatePath("/purchasing");
-}
-
-export async function ignoreInboxItemAction(formData: FormData) {
-  const auth = await mustAuth();
-  const row = await inboxRow(auth.workspace.id, String(formData.get("id") ?? ""));
-  if (!row || row.status === "imported") return;
-  await db.update(supplierInbox).set({ status: "ignored", dataBase64: null }).where(eq(supplierInbox.id, row.id));
-  revalidatePath("/purchasing");
 }
 
 /** "Vérifier maintenant": reads the mailbox right away instead of waiting for the 10-minute check. */

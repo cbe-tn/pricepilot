@@ -16,6 +16,7 @@ import { isCompatibleListing } from "@/lib/matching";
 import { moneyStr, n } from "@/lib/money";
 import type { AuthContext } from "@/lib/auth";
 import { isSelectedCompetitor } from "@/lib/connectors";
+import { deriveIdentity } from "@/lib/identity";
 
 const SOURCE_SLUG = "primini-source";
 const CATALOG_MAX_AGE_MS = 3 * 24 * 3600 * 1000;
@@ -243,13 +244,38 @@ const [settings] = await db.select().from(userSettings).where(eq(userSettings.us
 if (!settings) throw new Error("Aucun paramètre utilisateur associé au compte");
 const matchingAuth: AuthContext = { user, workspace: ws, settings };
 const selectedShopIds = selectedShops.map((c) => c.id);
+type PriminiSearch = { term: string; check: string; minScore: number; sizes: string[] };
+
+/**
+ * What to look up on Primini: the usual terms (reference, model, name), plus, for articles imported
+ * without a reference, brand + the model code read from the name ("TCL S5K 43" from
+ * "Téléviseur TCL 43\" S5K QLED…"). The code must then appear on the Primini page, and a screen size
+ * in the name (43, 55…) must appear in its title, so a 55" is never taken for the 43".
+ */
+function priminiSearches(p: Product): PriminiSearch[] {
+  const out: PriminiSearch[] = searchTermsForProduct(p).map((t) => ({ term: t, check: t, minScore: 60, sizes: [] }));
+  const words = p.name.split(/[\s"”″/,()—–-]+/).filter(Boolean);
+  const codes = words.filter(
+    (w) => w.length >= 2 && w.length <= 20 && /[a-z]/i.test(w) && /\d/.test(w) && !/^(\d+(go|gb|to|tb|kg|g|w|l|mp|m|hz|mah|v|p))$/i.test(w) && !/^[2-8]k$|^[345]g$|^3d$/i.test(w),
+  );
+  // A screen size is written 43" / 55 pouces; a bare number (a reference suffix such as "-80") is not one.
+  const size = p.name.match(/\b(\d{2})\s*(?:"|”|″|''|pouces?\b|po\b|inch)/i)?.[1];
+  const sizes = size && Number(size) >= 19 && Number(size) <= 98 ? [size] : [];
+  const brand = p.brand ?? deriveIdentity(p.name).brand;
+  for (const code of codes) {
+    if (out.some((s) => s.check.toLowerCase() === code.toLowerCase())) continue;
+    out.push({ term: [brand, code, ...sizes].filter(Boolean).join(" "), check: code, minScore: 35, sizes });
+  }
+  return out;
+}
+
 async function syncFromPrimini(p: Product) {
   const costTtc = n(p.purchasePrice) * (n(p.exchangeRate) || 1) * (1 + n(p.vatRate));
   let page: { url: string; sellers: Array<{ title: string; priceTnd: number; seller: string }> } | null = null;
-  for (const term of searchTermsForProduct(p)) {
-    const hits = (await searchCatalog([source.id], term, 8)).filter((h) => h.score >= 60);
+  for (const s of priminiSearches(p)) {
+    const hits = (await searchCatalog([source.id], s.term, 8)).filter((h) => h.score >= s.minScore && s.sizes.every((sz) => h.slugTitle.split(" ").includes(sz)));
     for (const hit of hits) {
-      const live = await fetchLiveOffer(hit.url, { reference: term });
+      const live = await fetchLiveOffer(hit.url, { reference: s.check });
       if (!live.ok || !live.offer.referenceOnPage || !live.offer.sellerOffers?.length) continue;
       page = { url: hit.url, sellers: live.offer.sellerOffers };
       break;

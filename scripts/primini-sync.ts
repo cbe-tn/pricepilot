@@ -7,10 +7,10 @@
 // are picked up automatically and an interrupted run continues where it stopped.
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { competitorOffers, competitors, priceObservations, products, userSettings, users, workspaces, type Competitor, type Product } from "@/db/schema";
-import { autoMatchProduct, catalogStatus, handledByOfficePc, rebuildCatalog, searchCatalog, searchTermsForProduct } from "@/lib/catalog";
+import { autoMatchProduct, catalogStatus, fuzzyReferenceHits, handledByOfficePc, rebuildCatalog, searchCatalog, searchTermsForProduct } from "@/lib/catalog";
 import { runMonitoringJob } from "@/lib/monitoring";
 import { compactText, fetchLiveOffer, type Availability } from "@/lib/extract";
 import { isCompatibleListing } from "@/lib/matching";
@@ -238,7 +238,7 @@ async function upsert(product: Product, shop: Competitor, pageUrl: string, offer
       title: offer.title,
       sellerName: offer.seller,
       availability: offer.availability,
-      matchReason: viaPrimini ? `Prix relevé via Primini (vendeur : ${offer.seller})` : "Prix vérifié sur la page produit du vendeur",
+      matchReason: `${viaPrimini ? `Prix relevé via Primini (vendeur : ${offer.seller})` : "Prix vérifié sur la page produit du vendeur"}${refNotes.get(product.id) ?? ""}`,
       lastCheckedAt: now,
       stale: false,
     }).where(eq(competitorOffers.id, mine.id));
@@ -266,7 +266,7 @@ async function upsert(product: Product, shop: Competitor, pageUrl: string, offer
       matchReason: compatible
         ? `Compatible relevé via Primini (vendeur : ${offer.seller})`
         : viaPrimini
-          ? `Prix relevé via Primini (vendeur : ${offer.seller}) — référence trouvée sur la page`
+          ? `Prix relevé via Primini (vendeur : ${offer.seller}) — référence trouvée sur la page${refNotes.get(product.id) ?? ""}`
           : "Prix vérifié sur la page produit du vendeur",
       excludedFromBenchmark: compatible,
       isCompatible: compatible,
@@ -303,12 +303,33 @@ function priminiSearches(p: Product): PriminiSearch[] {
   // A screen size is written 43" / 55 pouces; a bare number (a reference suffix such as "-80") is not one.
   const size = p.name.match(/\b(\d{2})\s*(?:"|”|″|''|pouces?\b|po\b|inch)/i)?.[1];
   const sizes = size && Number(size) >= 19 && Number(size) <= 98 ? [size] : [];
-  const brand = p.brand ?? deriveIdentity(p.name).brand;
+  // Brand: the article's, else the one read from the name, else a word written in capitals ("… 1704 KALE Terno").
+  const brand = p.brand ?? deriveIdentity(p.name).brand ?? p.name.split(/\s+/).find((w) => /^[A-Z]{3,}$/.test(w) && !/^(TV|LED|QLED|OLED|UHD|FHD|HD|PRO|USB|WIFI|SMART)$/.test(w)) ?? null;
+  // Digit-only model numbers ("1704") are searched only together with the brand.
+  if (brand) codes.push(...words.filter((w) => /^\d{3,6}$/.test(w) && !codes.includes(w)));
   for (const code of codes) {
     if (out.some((s) => s.check.toLowerCase() === code.toLowerCase())) continue;
     out.push({ term: [brand, code, ...sizes].filter(Boolean).join(" "), check: code, minScore: 35, sizes });
   }
   return out;
+}
+
+/** " — réf. du site GVS149DC3R-80 (fichier : GVS149D3R-80)" for articles found under a corrected reference. */
+const refNotes = new Map<string, string>();
+
+/**
+ * Our reference found nowhere but one character away from a listed one (a typo in the stock file): the
+ * article is searched with the shops' spelling, and every price found that way says so. Our data is not changed.
+ */
+async function withShopReference(p: Product): Promise<Product> {
+  const ref = p.manufacturerRef?.trim();
+  if (!ref) return p;
+  const ids = [source.id, ...selectedShopIds];
+  if ((await searchCatalog(ids, ref, 1)).some((h) => h.score >= 60)) return p;
+  const [near] = await fuzzyReferenceHits(ids, ref, p.name, p.brand ?? deriveIdentity(p.name).brand);
+  if (!near) return p;
+  refNotes.set(p.id, ` — réf. du site ${near.siteRef} (fichier : ${ref})`);
+  return { ...p, manufacturerRef: near.siteRef };
 }
 
 async function syncFromPrimini(p: Product) {
@@ -364,12 +385,20 @@ async function syncFromPrimini(p: Product) {
 // Each product is marked done as soon as it is synced, so an interrupted run loses at most a batch.
 for (let offset = 0; offset < due.length; offset += 5) {
   const batch = due.slice(offset, offset + 5);
-  const outcomes = await Promise.all(batch.map((p) => autoMatchProduct(matchingAuth, p, { competitorIds: selectedShopIds, verifyPerCompetitor: 1 })));
+  const prepared = await Promise.all(batch.map(withShopReference));
+  const outcomes = await Promise.all(prepared.map((p) => autoMatchProduct(matchingAuth, p, { competitorIds: selectedShopIds, verifyPerCompetitor: 1 })));
+  // Direct matches made with a corrected reference carry the same note as the Primini ones.
+  for (const p of prepared) {
+    const note = refNotes.get(p.id);
+    if (note) {
+      await db.execute(sql`update competitor_offers set match_reason = coalesce(match_reason, '') || ${note} where product_id = ${p.id} and coalesce(match_reason, '') not like ${"%" + note.trim() + "%"}`);
+    }
+  }
   for (const outcome of outcomes) {
     totals.directMatchesAdded += outcome.tracked.length;
     totals.reviewCandidates += outcome.review.length;
   }
-  for (const p of batch) {
+  for (const p of prepared) {
     try {
       await syncFromPrimini(p);
       synced[p.id] = Date.now();

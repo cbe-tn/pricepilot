@@ -780,16 +780,43 @@ export async function matchOwnListing(auth: AuthContext, product: Product): Prom
   for (const term of searchTermsForProduct(product)) {
     const res = await findByReference(auth, { reference: term, productId: product.id, verifyPerCompetitor: 3, competitorIds: [own.id] });
     for (const c of res.candidates) {
-      if (c.priceTnd == null) continue;
+      // A page that contradicts our article (another screen size, capacity or colour) is never ours.
+      if (c.priceTnd == null || !specsAgree(product.name, c.title)) continue;
       if (c.referenceOnPage && (c.matchClass === "exact" || c.matchClass === "strong")) {
         best = c;
         break;
       }
-      if (!review && c.referenceOnPage && c.confidence >= 40) review = c;
+      // A reference seen elsewhere on the page ("similar products", accessories) is not enough: the
+      // listing's own title must carry it, or it is another article (a 55P725 page citing the 55C6K).
+      if (!review && c.referenceOnPage && c.confidence >= 40 && compactText(c.title).includes(compactText(term))) review = c;
     }
     if (best) break;
   }
   if (!best && !review) review = await ownFallbackCandidate(own, product);
+  // A reference with a typo in the stock file ("GVS149D3R-80" for "GVS149DC3R-80"): offered for
+  // confirmation ("À vérifier"), never reported "À insérer" while the article is online.
+  if (!best && !review && product.manufacturerRef) {
+    const [near] = await fuzzyReferenceHits([own.id], product.manufacturerRef, product.name, product.brand ?? deriveIdentity(product.name).brand);
+    if (near) {
+      const live = await fetchLiveOffer(near.url);
+      if (live.ok) {
+        review = {
+          competitorId: own.id,
+          competitorName: own.name,
+          url: near.url,
+          title: live.offer.title ?? near.slugTitle,
+          imageUrl: live.offer.imageUrl,
+          priceTnd: live.offer.priceTnd,
+          availability: live.offer.availability,
+          referenceOnPage: false,
+          matchClass: "possible",
+          confidence: 60,
+          reason: `Référence proche sur le site : ${near.siteRef} (fichier : ${product.manufacturerRef})`,
+          alreadyTracked: false,
+        };
+      }
+    }
+  }
   const hit = best ?? review;
   // A confirmed listing on our shop has a clean title: fill brand / model / reference when the import had none,
   // and search the competitors again with the new reference.
@@ -814,7 +841,8 @@ export async function matchOwnListing(auth: AuthContext, product: Product): Prom
 }
 
 // Spec-like tokens that say nothing about the model: "3en1", "4800x1200pp", "a4", "29ppm", "2mp", "wifi".
-const SPEC_TOKEN_RE = /^(?:\d+en\d+|\d+x\d+\w*|a\d|\d+(?:ppm|mp|go|to|gb|tb|w|hz|cm|mm|pouces|dpi)|\d{1,2})$/;
+// Specs, not model codes: "3en1", "4k" (a 55" 4K TV is not a model), "5g", "9kg", "1400t"…
+const SPEC_TOKEN_RE = /^(?:\d+en\d+|\d+x\d+\w*|a\d|\d+(?:ppm|mp|go|to|gb|tb|w|hz|cm|mm|pouces|dpi|kg|l|t|v|mah|fps|p)|[2-8]k|[345]g|3d|\d{1,2})$/;
 
 /**
  * Our own pages often omit the supplier reference ("1TJ09A") or spell the model differently
@@ -824,7 +852,7 @@ const SPEC_TOKEN_RE = /^(?:\d+en\d+|\d+x\d+\w*|a\d|\d+(?:ppm|mp|go|to|gb|tb|w|hz
 async function ownFallbackCandidate(own: Competitor, product: Product): Promise<ReferenceCandidate | null> {
   const refKey = compactText(product.manufacturerRef ?? "");
   const tokens = queryTokens(product.name).filter((t) => !STOPWORDS.has(t) && compactText(t) !== refKey);
-  const models = tokens.filter((t) => /\d/.test(t) && !SPEC_TOKEN_RE.test(t)).sort((a, b) => b.length - a.length);
+  const models = tokens.filter((t) => /\d/.test(t) && t.length >= 3 && !SPEC_TOKEN_RE.test(t)).sort((a, b) => b.length - a.length);
   const words = tokens.filter((t) => !/\d/.test(t) && t.length >= 3);
   if (!models.length) return null;
   // "2190ii" → also try "2190" (trailing letters are often dropped or changed between shops).
@@ -839,12 +867,12 @@ async function ownFallbackCandidate(own: Competitor, product: Product): Promise<
   const scored = rows
     .map((r) => {
       const slugWords = new Set(normaliseUnits(r.slugTitle).split(" "));
-      const hasModel = variants.some((v) => slugWords.has(v) || [...slugWords].some((w) => w.startsWith(v)));
+      const hasModel = variants.some((v) => slugWords.has(v) || [...slugWords].some((w) => w.startsWith(v) || (v.length >= 3 && /^\d+/.test(w) && w.endsWith(v))));
       const wordHits = words.filter((w) => slugWords.has(w)).length;
       const otherModels = models.slice(1).filter((m) => r.slugTitle.replace(/ /g, "").includes(m)).length;
       return { r, hasModel, score: (words.length ? wordHits / words.length : 0) + otherModels * 0.2 };
     })
-    .filter((x) => x.hasModel && x.score >= 0.5 && !(isAccessoryOf(x.r.slugTitle, product.name)))
+    .filter((x) => x.hasModel && x.score >= 0.5 && !isAccessoryOf(x.r.slugTitle, product.name) && specsAgree(product.name, x.r.slugTitle))
     .sort((a, b) => b.score - a.score);
   const top = scored[0];
   if (!top) return null;
@@ -864,4 +892,97 @@ async function ownFallbackCandidate(own: Competitor, product: Product): Promise<
     reason: `Même modèle « ${main} » dans le titre — référence absente de la page, à vérifier`,
     alreadyTracked: false,
   };
+}
+
+// ---------- references with a typo ----------
+
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      rowMin = Math.min(rowMin, cur[j]);
+    }
+    if (rowMin > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+const COLOURS = ["noir", "blanc", "silver", "gris", "inox", "rouge", "bleu", "vert", "or", "argent", "beige"];
+
+/**
+ * The listing does not contradict our article: every capacity of our name (9 kg, 128 go, 55 pouces, 2000 w)
+ * is in its title, and a colour of our name is not replaced by another colour.
+ */
+export function specsAgree(productName: string, listingTitle: string): boolean {
+  const toks = (s: string) =>
+    new Set(
+      normaliseUnits(
+        s
+          .normalize("NFD")
+          .replace(/[̀-ͯ]/g, "")
+          .toLowerCase()
+          .replace(/(\d+)\s*(?:"|”|″|'')/g, "$1pouces")
+          .replace(/(\d+)\s*kg\b/g, "$1kg")
+          .replace(/(\d+)\s*w\b/g, "$1w")
+          .replace(/[^a-z0-9]+/g, " "),
+      ).split(" "),
+    );
+  const ours = toks(productName);
+  const theirs = toks(listingTitle);
+  for (const t of ours) {
+    if (!/^\d+(kg|go|to|pouces|w|l)$/.test(t) || theirs.has(t)) continue;
+    // Slugs drop the inch mark: a 43" is "43" or "43s5k" there. Another size written out (50pouces) refutes it.
+    const size = t.match(/^(\d+)pouces$/)?.[1];
+    if (size && [...theirs].some((w) => w === size || (w.startsWith(size) && /[a-z]/.test(w.slice(size.length)))) && ![...theirs].some((w) => /^\d+pouces$/.test(w))) continue;
+    return false;
+  }
+  const ourColours = COLOURS.filter((c) => ours.has(c));
+  if (ourColours.length && !ourColours.some((c) => theirs.has(c)) && COLOURS.some((c) => theirs.has(c))) return false;
+  return true;
+}
+
+export type FuzzyRefHit = { competitorId: string; url: string; slugTitle: string; siteRef: string; distance: number };
+
+/**
+ * Listings whose reference differs from ours by one character (two for references of 10+ characters):
+ * "GVS149D3R-80" typed in a stock file, "GVS149DC3R-80" on the shops. The slug words are also joined by
+ * two and three ("gvs149dc3r 80") since slugs split references. Same brand required when known, and the
+ * listing must not contradict our capacities / colour. Exact matches are left to the normal search.
+ */
+export async function fuzzyReferenceHits(competitorIds: string[], ref: string, productName: string, brand?: string | null): Promise<FuzzyRefHit[]> {
+  const key = compactText(ref);
+  if (!competitorIds.length || key.length < 6 || !/[a-z]/.test(key) || !/\d/.test(key)) return [];
+  const max = key.length >= 10 ? 2 : 1;
+  const prefix = key.match(/^[a-z]{2,}/)?.[0];
+  const digits = [...key.matchAll(/\d{3,}/g)].map((m) => m[0]).sort((a, b) => b.length - a.length)[0];
+  const conds = [prefix, digits].filter((t): t is string => Boolean(t)).map((t) => ilike(competitorCatalog.searchKey, `%${t}%`));
+  if (!conds.length) return [];
+  const rows = await db
+    .select()
+    .from(competitorCatalog)
+    .where(and(inArray(competitorCatalog.competitorId, competitorIds), ...conds))
+    .limit(500);
+  const brandKey = brand ? compactText(brand) : "";
+  const out: FuzzyRefHit[] = [];
+  for (const r of rows) {
+    if (brandKey && !r.searchKey.includes(brandKey)) continue;
+    const words = r.slugTitle.split(" ").filter(Boolean);
+    let best: { s: string; d: number } | null = null;
+    for (let i = 0; i < words.length; i++) {
+      for (let n = 1; n <= 3 && i + n <= words.length; n++) {
+        const s = words.slice(i, i + n).join("");
+        if (Math.abs(s.length - key.length) > max || !/\d/.test(s)) continue;
+        const d = editDistance(key, s, max);
+        if (d <= max && (!best || d < best.d)) best = { s: words.slice(i, i + n).join("-"), d };
+      }
+    }
+    if (!best || best.d === 0 || !specsAgree(productName, r.slugTitle)) continue;
+    out.push({ competitorId: r.competitorId, url: r.url, slugTitle: r.slugTitle, siteRef: best.s.toUpperCase(), distance: best.d });
+  }
+  return out.sort((a, b) => a.distance - b.distance);
 }

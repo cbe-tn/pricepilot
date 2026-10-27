@@ -261,7 +261,11 @@ export async function rebuildCatalog(competitor: Pick<Competitor, "id" | "websit
 
 async function ensureCatalog(competitor: Competitor, status: CatalogStatus | undefined): Promise<void> {
   const fresh = status && status.size > 0 && status.indexedAt && Date.now() - status.indexedAt.getTime() < CATALOG_MAX_AGE_MS;
-  if (!fresh) await rebuildCatalog(competitor);
+  if (fresh) return;
+  // On Vercel a full rebuild (thousands of sitemap pages) does not fit in one run: it was cut off every
+  // time and blocked every lookup. An old index is still good enough; the office-PC task refreshes it.
+  if (process.env.VERCEL && status && status.size > 0) return;
+  await rebuildCatalog(competitor);
 }
 
 // ---------- search ----------

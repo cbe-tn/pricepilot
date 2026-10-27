@@ -57,6 +57,22 @@ const [ws] = await db.select().from(workspaces).limit(1);
 if (!ws) throw new Error("Aucun espace de travail");
 
 const list = await db.select().from(products).where(and(eq(products.workspaceId, ws.id), isNull(products.archivedAt)));
+// Shop indexes (our numedia.tn shop and the selected shops) are refreshed here: on Vercel a rebuild does
+// not fit in one run, so the hosted app keeps using the old index until this task renews it.
+{
+  const shops = (await db.select().from(competitors).where(eq(competitors.workspaceId, ws.id))).filter((c) => c.isOwnShop || (c.enabled && isSelectedCompetitor(c)));
+  const states = await catalogStatus(shops.map((c) => c.id));
+  for (const shop of shops) {
+    const st = states.get(shop.id);
+    if (st?.size && st.indexedAt && Date.now() - st.indexedAt.getTime() < CATALOG_MAX_AGE_MS) continue;
+    try {
+      console.log(`Index ${shop.name} :`, (await rebuildCatalog(shop)).size, "pages");
+    } catch (e) {
+      console.log(`Index ${shop.name} : échec (${e instanceof Error ? e.message : e})`);
+    }
+  }
+}
+
 // Never-synced products first (a fresh stock import), then the oldest.
 const due = list.filter((p) => !synced[p.id] || Date.now() - synced[p.id] > REFRESH_MS).sort((a, b) => (synced[a.id] ?? 0) - (synced[b.id] ?? 0));
 if (!due.length) {

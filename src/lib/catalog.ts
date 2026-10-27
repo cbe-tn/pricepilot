@@ -67,6 +67,15 @@ function isLikelyProductUrl(url: string): boolean {
   );
 }
 
+/** Any page below the site root (not the home page itself). */
+function isPagePath(url: string): boolean {
+  try {
+    return new URL(url).pathname.replace(/\/+$/, "").length > 1;
+  } catch {
+    return false;
+  }
+}
+
 export async function crawlSitemaps(siteUrl: string): Promise<SitemapEntry[]> {
   const queue = await sitemapRoots(siteUrl);
   const seen = new Set<string>();
@@ -84,10 +93,13 @@ export async function crawlSitemaps(siteUrl: string): Promise<SitemapEntry[]> {
       queue.push(...pick);
       continue;
     }
+    // A sitemap file named for products ("sitemap-produits.xml") lists only products: its URLs are trusted
+    // whatever their shape (numedia.tn moved from "/produit/<slug>" to "/<slug>" in October 2026).
+    const productFile = /product|produit/i.test(new URL(loc).pathname);
     for (const m of xml.matchAll(/<url>([\s\S]*?)<\/url>/gi)) {
       const block = m[1];
       const url = stripCdata(block.match(/<loc>([\s\S]*?)<\/loc>/i)?.[1] ?? "");
-      if (!url || !isLikelyProductUrl(url) || entries.has(url)) continue;
+      if (!url || entries.has(url) || !(isLikelyProductUrl(url) || (productFile && isPagePath(url)))) continue;
       const image = block.match(/<image:loc>([\s\S]*?)<\/image:loc>/i)?.[1];
       const lastmod = block.match(/<lastmod>([\s\S]*?)<\/lastmod>/i)?.[1];
       const date = lastmod ? new Date(lastmod.trim()) : null;

@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { competitorOffers, competitors, priceObservations, products, userSettings, users, workspaces, type Competitor, type Product } from "@/db/schema";
-import { autoMatchProduct, catalogStatus, rebuildCatalog, searchCatalog, searchTermsForProduct } from "@/lib/catalog";
+import { autoMatchProduct, catalogStatus, handledByOfficePc, rebuildCatalog, searchCatalog, searchTermsForProduct } from "@/lib/catalog";
+import { runMonitoringJob } from "@/lib/monitoring";
 import { compactText, fetchLiveOffer, type Availability } from "@/lib/extract";
 import { isCompatibleListing } from "@/lib/matching";
 import { moneyStr, n } from "@/lib/money";
@@ -70,6 +71,25 @@ const list = await db.select().from(products).where(and(eq(products.workspaceId,
       console.log(`Index ${shop.name} :`, (await rebuildCatalog(shop)).size, "pages");
     } catch (e) {
       console.log(`Index ${shop.name} : échec (${e instanceof Error ? e.message : e})`);
+    }
+  }
+}
+
+// Shops that refuse the hosted app (Mytek, Graiet…): the hosted app no longer checks them, so their tracked
+// prices (read on their own product pages) are refreshed from this PC on every run.
+{
+  const [owner] = await db.select().from(users).where(eq(users.workspaceId, ws.id)).limit(1);
+  const [ownerSettings] = owner ? await db.select().from(userSettings).where(eq(userSettings.userId, owner.id)).limit(1) : [];
+  if (owner && ownerSettings) {
+    const pcAuth: AuthContext = { user: owner, workspace: ws, settings: ownerSettings };
+    const pcShops = (await db.select().from(competitors).where(eq(competitors.workspaceId, ws.id))).filter((c) => c.enabled && isSelectedCompetitor(c) && handledByOfficePc(c));
+    for (const shop of pcShops) {
+      try {
+        const r = await runMonitoringJob(pcAuth, { competitorId: shop.id, trigger: "office-pc", deadline: Date.now() + 8 * 60_000 });
+        console.log(`Prix ${shop.name} mis à jour depuis le PC : ${r.checked} vérifié(s), ${r.changes} changement(s)${r.hadError ? " (quelques pages illisibles, ancien prix gardé)" : ""}`);
+      } catch (e) {
+        console.log(`Prix ${shop.name} : échec (${e instanceof Error ? e.message : e})`);
+      }
     }
   }
 }

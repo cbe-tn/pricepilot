@@ -191,17 +191,10 @@ export function BenchmarkTable({
             Prix conseillé
           </th>
           {comps.map((c) => {
-            const blocked = isBlocked(c);
             return (
-              <th key={c.id} className="max-w-[92px] text-right" title={blocked ? c.lastError ?? "" : `${c.name} — ${compCount.get(c.id) ?? 0} produits trouvés`}>
+              <th key={c.id} className="max-w-[92px] text-right" title={`${c.name} — ${compCount.get(c.id) ?? 0} produits trouvés`}>
                 <div className="truncate">{c.name}</div>
-                {blocked && (compCount.get(c.id) ?? 0) > 0 ? (
-                  <div className="text-[9px] font-normal normal-case text-[#8a6100]">{compCount.get(c.id)} prod. via Primini</div>
-                ) : blocked ? (
-                  <div className="text-[9px] font-semibold normal-case text-[#b42323]">accès bloqué</div>
-                ) : (
-                  <div className="text-[9px] font-normal normal-case text-[#8aa1a7]">{compCount.get(c.id) ?? 0} prod.</div>
-                )}
+                <div className="text-[9px] font-normal normal-case text-[#8aa1a7]">{compCount.get(c.id) ?? 0} prod.</div>
               </th>
             );
           })}
@@ -255,7 +248,7 @@ export function BenchmarkTable({
                     const cell = r.cells[c.id];
                     if (!cell)
                       return (
-                        <td key={c.id} className="pp-none text-center" title={isBlocked(c) ? `${c.name} : accès bloqué par le site (protection anti-robot)` : `${c.name} : produit non trouvé`}>
+                        <td key={c.id} className="pp-none text-center" title={`${c.name} : produit non trouvé`}>
                           ·
                         </td>
                       );
@@ -308,8 +301,6 @@ export const benchmarkLegend = (
     l’article chez le concurrent
   </>
 );
-
-const isBlocked = (c: Competitor) => Boolean(c.lastError?.startsWith("Accès bloqué"));
 
 /** Cheapest compatible ("adaptable") version, marked as such; the others are listed in the tooltip. */
 function Compatibles({ r }: { r: BenchmarkRow }) {

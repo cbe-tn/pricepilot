@@ -12,7 +12,7 @@ import {
 import { probeCompetitor } from "@/lib/connectors";
 import { fetchLiveOffer } from "@/lib/extract";
 import { isPriminiUrl } from "@/lib/matching";
-import { sellerExclusions } from "@/lib/catalog";
+import { sellerExclusions, handledByOfficePc } from "@/lib/catalog";
 import { formatTnd, moneyStr, n } from "@/lib/money";
 import type { AuthContext } from "@/lib/auth";
 
@@ -56,6 +56,8 @@ export async function runMonitoringJob(auth: AuthContext, opts?: { competitorId?
       unfinished = true;
       break;
     }
+    // Refused to our server: refreshed by the office-PC task instead (never marked "à vérifier" here).
+    if (process.env.VERCEL && handledByOfficePc(source)) continue;
     const probe = await probeCompetitor(source.websiteUrl);
     if (!probe.ok) {
       hadError = true;

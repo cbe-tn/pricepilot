@@ -399,6 +399,12 @@ export type ReferenceCandidate = {
 export const BLOCKED_PREFIX = "Accès bloqué";
 
 /**
+ * Shops that refuse the hosted app (Mytek, Graiet…): Vercel no longer searches or monitors them; the
+ * office-PC task reads them (directly and through Primini) and keeps their prices up to date.
+ */
+export const handledByOfficePc = (c: Pick<Competitor, "lastError">) => Boolean(c.lastError?.startsWith(BLOCKED_PREFIX));
+
+/**
  * Remembers which competitors refuse our requests (anti-robot protection), so the benchmark can say
  * "accès bloqué" instead of looking empty; cleared as soon as a page from that site is read again.
  */
@@ -414,7 +420,8 @@ async function recordAccess(sources: Competitor[], verified: ReferenceCandidate[
         .update(competitors)
         .set({ lastError: `${BLOCKED_PREFIX} : le site refuse les visites automatiques depuis notre serveur (protection anti-robot, HTTP 403).` })
         .where(eq(competitors.id, s.id));
-    } else if (ok && wasBlocked) {
+    } else if (ok && wasBlocked && process.env.VERCEL) {
+      // Only the hosted app can tell it is let in again; the office PC is always let in.
       await db.update(competitors).set({ lastError: null }).where(eq(competitors.id, s.id));
     }
   }
@@ -614,10 +621,14 @@ export async function autoMatchProduct(
   const compatibles = new Map<string, ReferenceCandidate>();
   const rejectedUrls = new Set(existing.filter((o) => o.userReview === "reject" && o.url).map((o) => o.url!));
   const enabled = await db
-    .select({ id: competitors.id })
+    .select({ id: competitors.id, lastError: competitors.lastError })
     .from(competitors)
     .where(and(eq(competitors.workspaceId, auth.workspace.id), eq(competitors.enabled, true)));
-  const targets = enabled.map((c) => c.id).filter((id) => !covered.has(id) && (!opts?.competitorIds || opts.competitorIds.includes(id)));
+  const targets = enabled
+    // On Vercel, shops that refuse our server are left to the office-PC task.
+    .filter((c) => !(process.env.VERCEL && handledByOfficePc(c)))
+    .map((c) => c.id)
+    .filter((id) => !covered.has(id) && (!opts?.competitorIds || opts.competitorIds.includes(id)));
   if (!targets.length) return outcome;
 
   for (const term of searchTermsForProduct(product)) {

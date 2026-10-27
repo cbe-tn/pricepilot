@@ -2,7 +2,7 @@ import { and, count, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { competitors, monitoringErrors, monitoringJobs, products } from "@/db/schema";
 import { CatalogTools, CheckNowButton, CompetitorForm } from "@/components/ClientWidgets";
-import { BLOCKED_PREFIX, catalogStatus } from "@/lib/catalog";
+import { catalogStatus, handledByOfficePc } from "@/lib/catalog";
 import { schedulerStatus } from "@/lib/scheduler";
 import { fr } from "@/lib/labels";
 import { Badge, Card, PageHeader } from "@/components/ui";
@@ -104,7 +104,7 @@ export default async function CompetitorsPage() {
                   </div>
                 </div>
               </dl>
-              {c.lastError?.startsWith(BLOCKED_PREFIX) ? (
+              {handledByOfficePc(c) ? (
                 <p className="mt-2 text-xs text-[#4d6a72]">Prix relevés automatiquement depuis le PC du bureau (directement et via Primini).</p>
               ) : c.lastError ? (
                 <p className="mt-2 text-xs text-[#c53d3d]">{c.lastError}</p>

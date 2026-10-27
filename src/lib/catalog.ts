@@ -399,10 +399,17 @@ export type ReferenceCandidate = {
 export const BLOCKED_PREFIX = "Accès bloqué";
 
 /**
- * Shops that refuse the hosted app (Mytek, Graiet…): Vercel no longer searches or monitors them; the
+ * Shops that refuse the hosted app (Mytek, Graiet by default; OFFICE_PC_SHOPS = slugs) or were seen refusing it:
+ * Vercel no longer searches or monitors them; the
  * office-PC task reads them (directly and through Primini) and keeps their prices up to date.
  */
-export const handledByOfficePc = (c: Pick<Competitor, "lastError">) => Boolean(c.lastError?.startsWith(BLOCKED_PREFIX));
+const OFFICE_PC_SHOPS = new Set(
+  (process.env.OFFICE_PC_SHOPS ?? "mytek,graiet")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
+export const handledByOfficePc = (c: Pick<Competitor, "slug" | "lastError">) => OFFICE_PC_SHOPS.has(c.slug.toLowerCase()) || Boolean(c.lastError?.startsWith(BLOCKED_PREFIX));
 
 /**
  * Remembers which competitors refuse our requests (anti-robot protection), so the benchmark can say
@@ -621,7 +628,7 @@ export async function autoMatchProduct(
   const compatibles = new Map<string, ReferenceCandidate>();
   const rejectedUrls = new Set(existing.filter((o) => o.userReview === "reject" && o.url).map((o) => o.url!));
   const enabled = await db
-    .select({ id: competitors.id, lastError: competitors.lastError })
+    .select({ id: competitors.id, slug: competitors.slug, lastError: competitors.lastError })
     .from(competitors)
     .where(and(eq(competitors.workspaceId, auth.workspace.id), eq(competitors.enabled, true)));
   const targets = enabled

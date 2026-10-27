@@ -175,16 +175,36 @@ function isSellerProductUrl(url: string | null, shop: Competitor): boolean {
   }
 }
 
+/**
+ * The seller's own product page for a price read on Primini, so every link opens the exact article.
+ * Tried in order: our reference on the seller's page; the seller's own title as shown on Primini (it is the
+ * title of its product page); brand + model code from our name. A page found by title or model code must
+ * sell at about the Primini price (±8 %). When none is found, the link opens the seller's search results for
+ * the article (never its home page when the shop has a search URL).
+ */
 async function directOfferFor(product: Product, shop: Competitor, priminiOffer: PriceOffer): Promise<{ url: string; offer: PriceOffer; viaPrimini: boolean }> {
-  const terms = searchTermsForProduct(product);
-  for (const term of terms) {
-    const hits = (await searchCatalog([shop.id], term, 8)).filter((h) => h.score >= 60);
+  const domain = shop.domain.replace(/^www\./, "").toLowerCase();
+  const onShop = (url: string) => {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === domain || host.endsWith(`.${domain}`);
+  };
+  const model = priminiSearches(product).filter((s) => s.minScore < 60);
+  const attempts: Array<{ term: string; check: string | null; minScore: number; sizes: string[] }> = [
+    ...searchTermsForProduct(product).map((t) => ({ term: t, check: t, minScore: 60, sizes: [] as string[] })),
+    ...(priminiOffer.title ? [{ term: priminiOffer.title, check: null, minScore: 50, sizes: model[0]?.sizes ?? [] }] : []),
+    ...model.map((s) => ({ term: s.term, check: s.check, minScore: 35, sizes: s.sizes })),
+  ];
+  const tried = new Set<string>();
+  for (const a of attempts) {
+    const hits = (await searchCatalog([shop.id], a.term, 6)).filter((h) => h.score >= a.minScore && onShop(h.url) && a.sizes.every((sz) => h.slugTitle.split(" ").includes(sz)));
     for (const hit of hits) {
-      const hitUrl = new URL(hit.url);
-      const domain = shop.domain.replace(/^www\./, "").toLowerCase();
-      if (hitUrl.hostname.toLowerCase() !== domain && !hitUrl.hostname.toLowerCase().endsWith(`.${domain}`)) continue;
-      const live = await fetchLiveOffer(hit.url, { reference: term });
-      if (!live.ok || !live.offer.referenceOnPage || !live.offer.title) continue;
+      if (tried.has(hit.url)) continue;
+      tried.add(hit.url);
+      const live = await fetchLiveOffer(hit.url, a.check ? { reference: a.check } : undefined);
+      if (!live.ok || !live.offer.title) continue;
+      if (a.check && !live.offer.referenceOnPage) continue;
+      // Found by its title or model code: it must be the article Primini priced, not a neighbour.
+      if (a.minScore < 60 && Math.abs(live.offer.priceTnd - priminiOffer.priceTnd) > priminiOffer.priceTnd * 0.08) continue;
       return {
         url: hit.url,
         offer: {
@@ -197,7 +217,9 @@ async function directOfferFor(product: Product, shop: Competitor, priminiOffer: 
       };
     }
   }
-  return { url: shop.websiteUrl, offer: priminiOffer, viaPrimini: true };
+  const query = product.manufacturerRef || model[0]?.term || priminiOffer.title;
+  const searchUrl = shop.searchUrlTemplate && query ? shop.searchUrlTemplate.replace("{q}", encodeURIComponent(query)) : null;
+  return { url: searchUrl ?? shop.websiteUrl, offer: priminiOffer, viaPrimini: true };
 }
 
 async function upsert(product: Product, shop: Competitor, pageUrl: string, offer: PriceOffer, compatible: boolean, viaPrimini: boolean) {

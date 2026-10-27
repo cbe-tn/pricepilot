@@ -42,6 +42,9 @@ const HEADER_ALIASES: Record<string, string> = {
   codeabarres: "barcode", codebarre: "barcode", codebarres: "barcode", ean: "barcode",
   qte: "stockQty", quantite: "stockQty", stock: "stockQty",
   prixachatht: "purchasePrice", prixachat: "purchasePrice", prixht: "purchasePrice", pa: "purchasePrice",
+  // Purchase prices already TTC: kept as written (the HT is derived from them, never the reverse).
+  prixachatttc: "purchasePriceTtc", prixdachatttc: "purchasePriceTtc", pattc: "purchasePriceTtc", puttc: "purchasePriceTtc",
+  prixunitairettc: "purchasePriceTtc", coutttc: "purchasePriceTtc", coutachatttc: "purchasePriceTtc", prixttc: "purchasePriceTtc",
   prixventettc: "actualSellingPrice", prixdeventettc: "actualSellingPrice", prixdevente: "actualSellingPrice", pdvttc: "actualSellingPrice", cbe: "actualSellingPrice", numedia: "actualSellingPrice",
   marque: "brand", modele: "model", categorie: "category", famille: "category", fournisseur: "supplierName", tva: "vatRate",
   fabricant: "manufacturer", souscategorie: "subcategory", sku: "sku", transport: "shippingCost", fraisdimport: "importCost",
@@ -58,6 +61,7 @@ const HEADER_PATTERNS: Array<[RegExp, string]> = [
   [/designation|libelle/, "name"],
   [/^(quantite|qte)/, "stockQty"],
   [/^(reference|ref)(fabricant|constructeur|proposee)?$/, "manufacturerRef"],
+  [/^(prix(d)?achat|prixunitaire|pu|cout(d)?achat).*ttc/, "purchasePriceTtc"],
   [/^prix(d)?achat|^prixunitaire/, "purchasePrice"],
 ];
 
@@ -246,7 +250,9 @@ const num = (v: string | undefined) => n(String(v ?? "").replace(/\s/g, "").repl
  */
 export function stockRowFacts(row: Record<string, string>) {
   const { ref, alt } = cleanReference(row.manufacturerRef || row.reference, row.refReliability);
-  const unit = row.purchasePrice ? num(row.purchasePrice) : null;
+  // An HT column wins; otherwise a TTC purchase column (converted by the import with the article's VAT).
+  const purchaseIsTtc = !row.purchasePrice && Boolean(row.purchasePriceTtc);
+  const unit = row.purchasePrice ? num(row.purchasePrice) : row.purchasePriceTtc ? num(row.purchasePriceTtc) : null;
   // ERP discounts carry float noise (0,0004 ; 46,4998): keep 2 decimals.
   const rawDiscount = Math.max(0, Math.round(num(row.discountPct) * 100) / 100);
   const discountIgnored = rawDiscount >= 100;
@@ -268,6 +274,7 @@ export function stockRowFacts(row: Record<string, string>) {
     ref,
     model: row.model || (alt && alt !== ref ? alt : null),
     purchase,
+    purchaseIsTtc,
     stockQty: rawQty == null ? null : Math.max(0, rawQty),
     tags,
     note,

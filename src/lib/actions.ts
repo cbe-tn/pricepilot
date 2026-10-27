@@ -428,6 +428,14 @@ function asRate(v: string | undefined): number {
   return x > 1 ? x / 100 : x;
 }
 
+/** HT at 6 decimals: adding the VAT back and rounding to the millime gives exactly the TTC of the file. */
+function htFromTtc(ttc: number, vat: number): number {
+  return Math.round((ttc / (1 + vat)) * 1e6) / 1e6;
+}
+
+/** Purchase prices are stored with 6 decimals (see products.purchase_price). */
+const purchaseStr = (v: number) => (Math.round(v * 1e6) / 1e6).toFixed(6);
+
 export async function importProductsAction(formData: FormData) {
   const auth = await mustAuth();
   const file = formData.get("file");
@@ -475,15 +483,20 @@ export async function importProductsAction(formData: FormData) {
     const name = row.name || row.Name;
     if (!name) continue;
     // Cleaned reference (+ alternative as model), cost net of discount, negative stock as 0, auto tags.
-    const { ref, model, purchase, stockQty, tags: autoTags, note } = stockRowFacts(row);
+    const facts = stockRowFacts(row);
+    const { ref, model, stockQty, tags: autoTags, note } = facts;
     const barcode = row.barcode || row.ean || null;
     const unambiguous = (k: string) => k.length >= 3 && (fileNamesPerRef.get(k)?.size ?? 1) <= 1 && existingByKey.has(k);
     const keyMatch = [ref, barcode, row.sku].map(keyOf).find(unambiguous);
     const current = existingByName.get(keyOf(name)) ?? (keyMatch ? existingByKey.get(keyMatch)! : null);
+    // A TTC purchase price is kept exactly: the HT stored is the one that gives back that TTC with the
+    // article's VAT (file column, else the existing article's rate, else 7 % IT / 19 % other).
+    const vatForRow = asRate(row.vatRate) || (current ? n(current.vatRate) : vatRateFor({ name, category: row.category, subcategory: row.subcategory }));
+    const purchase = facts.purchase != null && facts.purchaseIsTtc ? htFromTtc(facts.purchase, vatForRow) : facts.purchase;
     if (current) {
       // Only overwrite what the file actually provides, so a "Réf + Qté" stock list keeps prices intact.
       const set: Partial<typeof products.$inferInsert> = { updatedAt: new Date() };
-      if (purchase != null) set.purchasePrice = moneyStr(purchase);
+      if (purchase != null) set.purchasePrice = purchaseStr(purchase);
       if (ref && ref !== current.manufacturerRef) set.manufacturerRef = ref; // the file is the source of truth
       set.tags = [...(current.tags ?? []).filter((t) => !AUTO_TAG_PREFIXES.some((p) => t.startsWith(p))), ...autoTags];
       if (note) set.notes = note;
@@ -518,7 +531,7 @@ export async function importProductsAction(formData: FormData) {
       sku: row.sku || null,
       category: row.category || null,
       subcategory: row.subcategory || null,
-      purchasePrice: moneyStr(purchase ?? 0),
+      purchasePrice: purchaseStr(purchase ?? 0),
       purchaseCurrency: row.purchaseCurrency || "TND",
       exchangeRate: moneyStr(n(row.exchangeRate) || 1),
       shippingCost: moneyStr(n(row.shippingCost)),

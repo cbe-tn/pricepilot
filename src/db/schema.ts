@@ -225,7 +225,8 @@ export const products = pgTable(
     category: text("category"),
     subcategory: text("subcategory"),
     imageUrl: text("image_url"),
-    purchasePrice: money("purchase_price").default("0").notNull(),
+    // 6 decimals: a purchase price imported TTC gives back exactly that TTC (3 decimals HT cannot always).
+    purchasePrice: numeric("purchase_price", { precision: 16, scale: 6 }).default("0").notNull(),
     purchaseCurrency: text("purchase_currency").default("TND").notNull(),
     exchangeRate: money("exchange_rate").default("1").notNull(),
     shippingCost: money("shipping_cost").default("0").notNull(),
